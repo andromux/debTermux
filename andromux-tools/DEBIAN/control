@@ -1,0 +1,5 @@
+Package: andromux-tools
+Version: 1.0
+Architecture: all
+Maintainer: andromux
+Description: Herramientas CLI para gestionar repositorios y APKs desde Termux

@@ -1,0 +1,42 @@
+#!/bin/bash
+
+# Validar que se esté en un repositorio Git
+if ! git rev-parse --is-inside-work-tree &>/dev/null; then
+    echo "Este directorio no es un repositorio Git válido."
+    exit 1
+fi
+
+# Obtener el nombre del repositorio desde Git
+REPO=$(basename -s .git "$(git config --get remote.origin.url)")
+OWNER="andromux"
+
+# Solicitar ruta del APK si no se pasó como argumento
+APK_PATH="$1"
+if [ -z "$APK_PATH" ]; then
+    read -p "Ruta al archivo APK: " APK_PATH
+fi
+
+if [ ! -f "$APK_PATH" ]; then
+    echo "Archivo no encontrado en: $APK_PATH"
+    exit 1
+fi
+
+# Solicitar versión del release
+read -p "Versión del release (ej. v1.0.0): " VERSION
+read -p "Descripción del release: " DESCRIPTION
+
+# Confirmar tag local si no existe
+if ! git rev-parse "$VERSION" >/dev/null 2>&1; then
+    git tag "$VERSION"
+    git push origin "$VERSION"
+fi
+
+# Crear release y subir APK
+echo "Creando release '$VERSION' para $OWNER/$REPO..."
+gh release create "$VERSION" "$APK_PATH" \
+  --repo "$OWNER/$REPO" \
+  --title "$VERSION" \
+  --notes "$DESCRIPTION" \
+  --latest
+
+echo "Release $VERSION creado exitosamente con $APK_PATH."

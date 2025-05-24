@@ -1,0 +1,50 @@
+#!/bin/bash
+
+# Validar parámetro
+if [ -z "$1" ]; then
+    echo "Uso: andromux <nombre_del_repositorio>"
+    exit 1
+fi
+
+REPO="$1"
+GITHUB_USER="andromux"
+
+# Verificar si el repositorio ya existe
+if gh repo view "$GITHUB_USER/$REPO" &>/dev/null; then
+    echo "El repositorio '$REPO' ya existe. Clonando..."
+    git clone "git@github.com:$GITHUB_USER/$REPO.git" "$REPO"
+    exit 0
+fi
+
+# Preguntar tipo de repositorio
+echo "El repositorio '$REPO' no existe."
+echo "¿Cómo deseas crearlo?"
+echo "  [1] Público"
+echo "  [2] Privado"
+read -p "Selecciona una opción (1 o 2): " TIPO
+
+# Crear el repositorio
+if [ "$TIPO" == "1" ]; then
+    echo "Creando repositorio '$REPO' como público..."
+    gh repo create "$GITHUB_USER/$REPO" --public --disable-wiki --disable-issues
+elif [ "$TIPO" == "2" ]; then
+    echo "Creando repositorio '$REPO' como privado..."
+    gh repo create "$GITHUB_USER/$REPO" --private --disable-wiki --disable-issues
+else
+    echo "Opción inválida. Cancelado."
+    exit 1
+fi
+
+# Clonar en directorio actual
+git clone "git@github.com:$GITHUB_USER/$REPO.git" "$REPO"
+cd "$REPO" || exit 1
+
+# Crear README.md con nombre del repo
+echo "# $REPO" > README.md
+
+# Subir primer commit
+git add README.md
+git commit -m "Agregar README inicial"
+git push origin main
+
+echo "Repositorio '$REPO' creado, clonado y con README.md inicial listo."

@@ -1,0 +1,21 @@
+#!/bin/bash
+
+# Validar nombre del repositorio
+if [ -z "$1" ]; then
+    echo "Uso: andromux-remove <nombre_del_repositorio>"
+    exit 1
+fi
+
+REPO="$1"
+GITHUB_USER="andromux"
+
+# Confirmación
+read -p "¿Estás seguro de que deseas eliminar '$REPO'? (s/n): " CONFIRM
+
+if [[ "$CONFIRM" =~ ^[sS]$ ]]; then
+    echo "Eliminando repositorio '$REPO'..."
+    gh repo delete "$GITHUB_USER/$REPO" --yes
+else
+    echo "Cancelado."
+    exit 0
+fi
