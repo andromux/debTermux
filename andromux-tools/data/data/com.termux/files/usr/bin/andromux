@@ -33,12 +33,16 @@ mostrar_ayuda() {
     echo -e "  -c, --close            Solo privados"
     echo -e "  -n, --numero <N>       Número de repos a mostrar (por defecto: ${DEFAULT_LIMIT})"
     echo ""
+    echo -e "${COLOR_YELLOW}Opciones de repositorio:${COLOR_RESET}"
+    echo -e "  -o, --open <repo>      Abrir repositorio en el navegador"
+    echo ""
     echo -e "${COLOR_YELLOW}Otras opciones:${COLOR_RESET}"
     echo -e "  -h, --help             Mostrar esta ayuda"
     echo ""
     echo -e "${COLOR_GREEN}Ejemplos:${COLOR_RESET}"
     echo -e "  andromux --list"
     echo -e "  andromux -l -p -n 20"
+    echo -e "  andromux -o mi-repo"
     echo -e "  andromux mi-repo"
     echo ""
     exit 0
@@ -93,6 +97,46 @@ listar_repos() {
     done
 }
 
+# Abrir repositorio en navegador
+abrir_repo() {
+    repo_name="$1"
+    
+    if [[ -z "$repo_name" ]]; then
+        echo -e "${COLOR_RED}[Error]${COLOR_RESET} Debes especificar el nombre del repositorio"
+        echo -e "Ejemplo: ${COLOR_GREEN}andromux -o mi-repo${COLOR_RESET}"
+        exit 1
+    fi
+    
+    echo -e "${COLOR_BLUE}Abriendo repositorio: $GITHUB_USER/$repo_name${COLOR_RESET}"
+    
+    # Verificar si el repositorio existe
+    if gh repo view "$GITHUB_USER/$repo_name" >/dev/null 2>&1; then
+        repo_url="https://github.com/$GITHUB_USER/$repo_name"
+        echo -e "${COLOR_GREEN}URL:${COLOR_RESET} $repo_url"
+        
+        # Intentar abrir en navegador usando diferentes comandos según el sistema
+        if command -v termux-open-url >/dev/null 2>&1; then
+            # Termux Android
+            termux-open-url "$repo_url"
+            echo -e "${COLOR_GREEN}✓ Repositorio abierto en el navegador${COLOR_RESET}"
+        elif command -v xdg-open >/dev/null 2>&1; then
+            # Linux
+            xdg-open "$repo_url" >/dev/null 2>&1
+            echo -e "${COLOR_GREEN}✓ Repositorio abierto en el navegador${COLOR_RESET}"
+        elif command -v open >/dev/null 2>&1; then
+            # macOS
+            open "$repo_url"
+            echo -e "${COLOR_GREEN}✓ Repositorio abierto en el navegador${COLOR_RESET}"
+        else
+            echo -e "${COLOR_YELLOW}[Info]${COLOR_RESET} No se pudo abrir automáticamente."
+            echo -e "Copia y pega esta URL en tu navegador: ${COLOR_CYAN}$repo_url${COLOR_RESET}"
+        fi
+    else
+        echo -e "${COLOR_RED}✗ Error: El repositorio '$GITHUB_USER/$repo_name' no existe o no tienes acceso${COLOR_RESET}"
+        exit 1
+    fi
+}
+
 # Clonar repositorio
 clonar_repo() {
     repo_name="$1"
@@ -108,6 +152,7 @@ clonar_repo() {
 
 # Procesamiento de argumentos
 LISTAR=false
+ABRIR=false
 TIPO_REPO="all"
 LIMITE=$DEFAULT_LIMIT
 REPO_NAME=""
@@ -130,6 +175,11 @@ while [[ $# -gt 0 ]]; do
             LIMITE="$2"
             shift 2
             ;;
+        -o|--open)
+            ABRIR=true
+            REPO_NAME="$2"
+            shift 2
+            ;;
         -h|--help)
             mostrar_ayuda
             ;;
@@ -145,6 +195,8 @@ done
 # Ejecutar acción correspondiente
 if [[ "$LISTAR" == true ]]; then
     listar_repos "$TIPO_REPO" "$LIMITE"
+elif [[ "$ABRIR" == true ]]; then
+    abrir_repo "$REPO_NAME"
 elif [[ -n "$REPO_NAME" ]]; then
     clonar_repo "$REPO_NAME"
 else
