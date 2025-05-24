@@ -1,50 +1,154 @@
-#!/bin/bash
+#!/data/data/com.termux/files/usr/bin/bash
 
-# Validar parámetro
-if [ -z "$1" ]; then
-    echo "Uso: andromux <nombre_del_repositorio>"
-    exit 1
-fi
-
-REPO="$1"
+# Configuración general
 GITHUB_USER="andromux"
+DEFAULT_LIMIT=30
+COLOR_RESET="\033[0m"
+COLOR_GREEN="\033[1;32m"
+COLOR_YELLOW="\033[1;33m"
+COLOR_RED="\033[1;31m"
+COLOR_CYAN="\033[1;36m"
+COLOR_BLUE="\033[1;34m"
 
-# Verificar si el repositorio ya existe
-if gh repo view "$GITHUB_USER/$REPO" &>/dev/null; then
-    echo "El repositorio '$REPO' ya existe. Clonando..."
-    git clone "git@github.com:$GITHUB_USER/$REPO.git" "$REPO"
+# Verificar dependencias
+command -v jq >/dev/null 2>&1 || {
+    echo -e "${COLOR_RED}[Error]${COLOR_RESET} jq no está instalado. Instalando..."
+    pkg install -y jq
+}
+
+command -v gh >/dev/null 2>&1 || {
+    echo -e "${COLOR_RED}[Error]${COLOR_RESET} GitHub CLI no está instalado. Instalando..."
+    pkg install -y gh
+}
+
+# Mostrar ayuda colorida
+mostrar_ayuda() {
+    echo -e "${COLOR_CYAN}Andromux - CLI para gestionar repositorios GitHub${COLOR_RESET}"
+    echo ""
+    echo -e "${COLOR_GREEN}Uso:${COLOR_RESET} andromux [opciones] <nombre_del_repositorio>"
+    echo ""
+    echo -e "${COLOR_YELLOW}Opciones de listado:${COLOR_RESET}"
+    echo -e "  -l, --list             Listar repositorios"
+    echo -e "  -p, --public           Solo públicos"
+    echo -e "  -c, --close            Solo privados"
+    echo -e "  -n, --numero <N>       Número de repos a mostrar (por defecto: ${DEFAULT_LIMIT})"
+    echo ""
+    echo -e "${COLOR_YELLOW}Otras opciones:${COLOR_RESET}"
+    echo -e "  -h, --help             Mostrar esta ayuda"
+    echo ""
+    echo -e "${COLOR_GREEN}Ejemplos:${COLOR_RESET}"
+    echo -e "  andromux --list"
+    echo -e "  andromux -l -p -n 20"
+    echo -e "  andromux mi-repo"
+    echo ""
     exit 0
-fi
+}
 
-# Preguntar tipo de repositorio
-echo "El repositorio '$REPO' no existe."
-echo "¿Cómo deseas crearlo?"
-echo "  [1] Público"
-echo "  [2] Privado"
-read -p "Selecciona una opción (1 o 2): " TIPO
+# Listar repositorios con formato limpio
+listar_repos() {
+    tipo="$1"
+    limite="$2"
 
-# Crear el repositorio
-if [ "$TIPO" == "1" ]; then
-    echo "Creando repositorio '$REPO' como público..."
-    gh repo create "$GITHUB_USER/$REPO" --public --disable-wiki --disable-issues
-elif [ "$TIPO" == "2" ]; then
-    echo "Creando repositorio '$REPO' como privado..."
-    gh repo create "$GITHUB_USER/$REPO" --private --disable-wiki --disable-issues
+    case "$tipo" in
+        "public") filtro="--visibility public" ;;
+        "private") filtro="--visibility private" ;;
+        *) filtro="" ;;
+    esac
+
+    echo -e "${COLOR_BLUE}Listando repositorios ($tipo) de $GITHUB_USER (máx $limite)...${COLOR_RESET}"
+    echo ""
+
+    # Verificar si gh está autenticado
+    if ! gh auth status >/dev/null 2>&1; then
+        echo -e "${COLOR_RED}[Error]${COLOR_RESET} No estás autenticado en GitHub CLI"
+        echo -e "Ejecuta: ${COLOR_GREEN}gh auth login${COLOR_RESET}"
+        exit 1
+    fi
+
+    # Obtener y formatear repositorios
+    gh repo list "$GITHUB_USER" $filtro --limit "$limite" --json name,visibility,updatedAt,description | \
+    jq -r '.[] | "\(.name)|\(.visibility)|\(.updatedAt[:10])|\(.description // "")"' | \
+    while IFS='|' read -r name visibility updated desc; do
+        # Limpiar espacios en blanco
+        name=$(echo "$name" | xargs)
+        visibility=$(echo "$visibility" | xargs)
+        updated=$(echo "$updated" | xargs)
+        desc=$(echo "$desc" | xargs)
+        
+        # Colorear según visibilidad
+        if [[ "$visibility" == "PUBLIC" ]]; then
+            vis_color="${COLOR_GREEN}PUBLIC${COLOR_RESET}"
+        elif [[ "$visibility" == "PRIVATE" ]]; then
+            vis_color="${COLOR_YELLOW}PRIVATE${COLOR_RESET}"
+        else
+            # Para cualquier otro valor, mostrar tal como viene
+            vis_color="${COLOR_BLUE}${visibility}${COLOR_RESET}"
+        fi
+        
+        echo -e "${COLOR_CYAN}${name}${COLOR_RESET} [${vis_color}] - ${updated}"
+        if [[ -n "$desc" && "$desc" != "null" ]]; then
+            echo -e "  ${COLOR_RESET}${desc}${COLOR_RESET}"
+        fi
+        echo ""
+    done
+}
+
+# Clonar repositorio
+clonar_repo() {
+    repo_name="$1"
+    echo -e "${COLOR_BLUE}Clonando repositorio: $repo_name${COLOR_RESET}"
+    
+    if gh repo clone "$GITHUB_USER/$repo_name"; then
+        echo -e "${COLOR_GREEN}✓ Repositorio clonado exitosamente${COLOR_RESET}"
+    else
+        echo -e "${COLOR_RED}✗ Error al clonar el repositorio${COLOR_RESET}"
+        exit 1
+    fi
+}
+
+# Procesamiento de argumentos
+LISTAR=false
+TIPO_REPO="all"
+LIMITE=$DEFAULT_LIMIT
+REPO_NAME=""
+
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        -l|--list)
+            LISTAR=true
+            shift
+            ;;
+        -p|--public)
+            TIPO_REPO="public"
+            shift
+            ;;
+        -c|--close)
+            TIPO_REPO="private"
+            shift
+            ;;
+        -n|--numero)
+            LIMITE="$2"
+            shift 2
+            ;;
+        -h|--help)
+            mostrar_ayuda
+            ;;
+        *)
+            if [[ -z "$REPO_NAME" ]]; then
+                REPO_NAME="$1"
+            fi
+            shift
+            ;;
+    esac
+done
+
+# Ejecutar acción correspondiente
+if [[ "$LISTAR" == true ]]; then
+    listar_repos "$TIPO_REPO" "$LIMITE"
+elif [[ -n "$REPO_NAME" ]]; then
+    clonar_repo "$REPO_NAME"
 else
-    echo "Opción inválida. Cancelado."
+    echo -e "${COLOR_RED}[Error]${COLOR_RESET} Debes especificar una acción o nombre de repositorio"
+    echo -e "Usa ${COLOR_GREEN}andromux --help${COLOR_RESET} para ver las opciones disponibles"
     exit 1
 fi
-
-# Clonar en directorio actual
-git clone "git@github.com:$GITHUB_USER/$REPO.git" "$REPO"
-cd "$REPO" || exit 1
-
-# Crear README.md con nombre del repo
-echo "# $REPO" > README.md
-
-# Subir primer commit
-git add README.md
-git commit -m "Agregar README inicial"
-git push origin main
-
-echo "Repositorio '$REPO' creado, clonado y con README.md inicial listo."
