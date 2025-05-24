@@ -1,42 +1,463 @@
 #!/bin/bash
 
-# Validar que se esté en un repositorio Git
-if ! git rev-parse --is-inside-work-tree &>/dev/null; then
-    echo "Este directorio no es un repositorio Git válido."
-    exit 1
-fi
+# GitHub Release Manager Pro
+# Herramienta profesional para crear releases de APKs y otros archivos
 
-# Obtener el nombre del repositorio desde Git
-REPO=$(basename -s .git "$(git config --get remote.origin.url)")
+set -euo pipefail  # Modo estricto
+
+# Configuración
 OWNER="andromux"
+SCRIPT_NAME="$(basename "$0")"
+VERSION_SCRIPT="1.2.0"
 
-# Solicitar ruta del APK si no se pasó como argumento
-APK_PATH="$1"
-if [ -z "$APK_PATH" ]; then
-    read -p "Ruta al archivo APK: " APK_PATH
-fi
+# Colores para output
+readonly COLOR_RESET="\033[0m"
+readonly COLOR_GREEN="\033[1;32m"
+readonly COLOR_YELLOW="\033[1;33m"
+readonly COLOR_RED="\033[1;31m"
+readonly COLOR_CYAN="\033[1;36m"
+readonly COLOR_BLUE="\033[1;34m"
+readonly COLOR_MAGENTA="\033[1;35m"
 
-if [ ! -f "$APK_PATH" ]; then
-    echo "Archivo no encontrado en: $APK_PATH"
-    exit 1
-fi
+# Funciones de utilidad
+log_info() { echo -e "${COLOR_BLUE}[INFO]${COLOR_RESET} $*"; }
+log_success() { echo -e "${COLOR_GREEN}[SUCCESS]${COLOR_RESET} $*"; }
+log_warning() { echo -e "${COLOR_YELLOW}[WARNING]${COLOR_RESET} $*"; }
+log_error() { echo -e "${COLOR_RED}[ERROR]${COLOR_RESET} $*"; }
+log_step() { echo -e "${COLOR_CYAN}[PASO]${COLOR_RESET} $*"; }
 
-# Solicitar versión del release
-read -p "Versión del release (ej. v1.0.0): " VERSION
-read -p "Descripción del release: " DESCRIPTION
+# Función de ayuda
+mostrar_ayuda() {
+    cat << EOF
+${COLOR_CYAN}GitHub Release Manager Pro v${VERSION_SCRIPT}${COLOR_RESET}
 
-# Confirmar tag local si no existe
-if ! git rev-parse "$VERSION" >/dev/null 2>&1; then
-    git tag "$VERSION"
-    git push origin "$VERSION"
-fi
+${COLOR_GREEN}Uso:${COLOR_RESET} $SCRIPT_NAME [opciones] [archivo]
 
-# Crear release y subir APK
-echo "Creando release '$VERSION' para $OWNER/$REPO..."
-gh release create "$VERSION" "$APK_PATH" \
-  --repo "$OWNER/$REPO" \
-  --title "$VERSION" \
-  --notes "$DESCRIPTION" \
-  --latest
+${COLOR_YELLOW}Opciones:${COLOR_RESET}
+  -f, --file <archivo>       Archivo a subir (APK, ZIP, etc.)
+  -v, --version <version>    Versión del release (ej: v1.0.0)
+  -d, --description <desc>   Descripción del release
+  -t, --title <titulo>       Título personalizado del release
+  -p, --prerelease          Marcar como pre-release
+  -D, --draft               Crear como borrador
+  -a, --auto-increment      Auto-incrementar versión basada en la última
+  -c, --changelog           Generar changelog automático
+  -s, --sign                Firmar el release (requiere GPG)
+  -o, --owner <owner>       Propietario del repositorio (default: $OWNER)
+  -r, --repo <repo>         Nombre del repositorio (auto-detectado)
+  -l, --list                Listar releases existentes
+  -x, --delete <version>    Eliminar un release existente
+  -u, --update <version>    Actualizar un release existente
+  -n, --dry-run             Mostrar qué se haría sin ejecutar
+  -q, --quiet               Modo silencioso
+  -h, --help                Mostrar esta ayuda
+  --config <file>           Usar archivo de configuración personalizado
+  --force                   Forzar operación sin confirmación
 
-echo "Release $VERSION creado exitosamente con $APK_PATH."
+${COLOR_GREEN}Ejemplos:${COLOR_RESET}
+  $SCRIPT_NAME app.apk
+  $SCRIPT_NAME -f app.apk -v v2.1.0 -d "Nueva funcionalidad"
+  $SCRIPT_NAME --auto-increment --changelog app.apk
+  $SCRIPT_NAME --list
+  $SCRIPT_NAME --delete v1.0.0
+  $SCRIPT_NAME --prerelease --draft app-beta.apk
+
+${COLOR_GREEN}Formatos de archivo soportados:${COLOR_RESET}
+  APK, ZIP, TAR.GZ, DEB, RPM, JAR, AAB, IPA
+
+EOF
+    exit 0
+}
+
+# Verificar dependencias
+verificar_dependencias() {
+    local deps=("git" "gh" "jq")
+    local missing=()
+    
+    for dep in "${deps[@]}"; do
+        if ! command -v "$dep" >/dev/null 2>&1; then
+            missing+=("$dep")
+        fi
+    done
+    
+    if [ ${#missing[@]} -ne 0 ]; then
+        log_error "Dependencias faltantes: ${missing[*]}"
+        log_info "Instala las dependencias:"
+        for dep in "${missing[@]}"; do
+            case "$dep" in
+                "gh") echo "  - GitHub CLI: https://cli.github.com/" ;;
+                "jq") echo "  - jq: pkg install jq" ;;
+                "git") echo "  - git: pkg install git" ;;
+            esac
+        done
+        exit 1
+    fi
+}
+
+# Validar repositorio Git
+validar_repositorio() {
+    if ! git rev-parse --is-inside-work-tree &>/dev/null; then
+        log_error "Este directorio no es un repositorio Git válido"
+        exit 1
+    fi
+    
+    if ! git config --get remote.origin.url >/dev/null 2>&1; then
+        log_error "No se encontró remote origin configurado"
+        exit 1
+    fi
+}
+
+# Obtener información del repositorio
+obtener_info_repo() {
+    REPO_URL=$(git config --get remote.origin.url)
+    REPO=$(basename -s .git "$REPO_URL")
+    CURRENT_BRANCH=$(git branch --show-current)
+    
+    # Verificar si hay cambios sin commitear
+    if ! git diff-index --quiet HEAD -- 2>/dev/null; then
+        log_warning "Hay cambios sin commitear en el repositorio"
+        if [[ "${FORCE:-false}" != "true" ]]; then
+            read -p "¿Continuar de todos modos? (y/N): " -n 1 -r
+            echo
+            [[ ! $REPLY =~ ^[Yy]$ ]] && exit 1
+        fi
+    fi
+}
+
+# Validar autenticación de GitHub
+validar_auth() {
+    if ! gh auth status >/dev/null 2>&1; then
+        log_error "No estás autenticado en GitHub CLI"
+        log_info "Ejecuta: gh auth login"
+        exit 1
+    fi
+}
+
+# Listar releases existentes
+listar_releases() {
+    log_step "Listando releases de $OWNER/$REPO..."
+    echo ""
+    
+    gh release list --repo "$OWNER/$REPO" --limit 20 | while IFS=$'\t' read -r tag name type date; do
+        status_color=""
+        case "$type" in
+            "Latest") status_color="${COLOR_GREEN}" ;;
+            "Pre-release") status_color="${COLOR_YELLOW}" ;;
+            "Draft") status_color="${COLOR_MAGENTA}" ;;
+            *) status_color="${COLOR_RESET}" ;;
+        esac
+        
+        echo -e "${COLOR_CYAN}$tag${COLOR_RESET} - $name ${status_color}[$type]${COLOR_RESET} ($date)"
+    done
+    echo ""
+}
+
+# Auto-incrementar versión
+auto_incrementar_version() {
+    local ultima_version
+    ultima_version=$(gh release list --repo "$OWNER/$REPO" --limit 1 --json tagName --jq '.[0].tagName' 2>/dev/null || echo "v0.0.0")
+    
+    if [[ "$ultima_version" =~ ^v?([0-9]+)\.([0-9]+)\.([0-9]+) ]]; then
+        local major="${BASH_REMATCH[1]}"
+        local minor="${BASH_REMATCH[2]}"
+        local patch="${BASH_REMATCH[3]}"
+        
+        # Incrementar patch por defecto
+        ((patch++))
+        
+        VERSION="v${major}.${minor}.${patch}"
+        log_info "Versión auto-incrementada: $VERSION (anterior: $ultima_version)"
+    else
+        VERSION="v1.0.0"
+        log_info "Primera versión: $VERSION"
+    fi
+}
+
+# Generar changelog automático
+generar_changelog() {
+    local ultima_version="$1"
+    local changelog_file="/tmp/changelog_$$.md"
+    
+    log_step "Generando changelog desde $ultima_version..."
+    
+    {
+        echo "## Cambios en $VERSION"
+        echo ""
+        
+        # Obtener commits desde la última versión
+        if git rev-parse "$ultima_version" >/dev/null 2>&1; then
+            echo "### Commits:"
+            git log --oneline "$ultima_version..HEAD" --pretty="format:- %s (%h)" 2>/dev/null || true
+        else
+            echo "### Commits desde el inicio:"
+            git log --oneline --pretty="format:- %s (%h)" 2>/dev/null || true
+        fi
+        
+        echo ""
+        echo "### Estadísticas:"
+        echo "- Fecha: $(date '+%Y-%m-%d %H:%M:%S')"
+        echo "- Branch: $CURRENT_BRANCH"
+        echo "- Commit: $(git rev-parse --short HEAD)"
+        
+        if [[ -n "${APK_PATH:-}" ]]; then
+            echo "- Archivo: $(basename "$APK_PATH") ($(du -h "$APK_PATH" | cut -f1))"
+        fi
+    } > "$changelog_file"
+    
+    DESCRIPTION=$(cat "$changelog_file")
+    rm -f "$changelog_file"
+}
+
+# Validar formato de archivo
+validar_archivo() {
+    local archivo="$1"
+    local extension="${archivo##*.}"
+    local extensiones_validas=("apk" "zip" "tar.gz" "deb" "rpm" "jar" "aab" "ipa" "exe" "dmg")
+    
+    # Validar extensión
+    local valida=false
+    for ext in "${extensiones_validas[@]}"; do
+        if [[ "${archivo,,}" == *".$ext" ]]; then
+            valida=true
+            break
+        fi
+    done
+    
+    if [[ "$valida" == false ]]; then
+        log_warning "Extensión de archivo no común: .$extension"
+        if [[ "${FORCE:-false}" != "true" ]]; then
+            read -p "¿Continuar de todos modos? (y/N): " -n 1 -r
+            echo
+            [[ ! $REPLY =~ ^[Yy]$ ]] && exit 1
+        fi
+    fi
+    
+    # Información del archivo
+    local size=$(du -h "$archivo" | cut -f1)
+    local md5sum=$(md5sum "$archivo" | cut -d' ' -f1)
+    
+    log_info "Archivo: $(basename "$archivo") ($size)"
+    log_info "MD5: $md5sum"
+}
+
+# Crear release
+crear_release() {
+    local args=()
+    
+    # Construcción de argumentos
+    args+=("$VERSION" "$APK_PATH")
+    args+=("--repo" "$OWNER/$REPO")
+    args+=("--title" "${TITLE:-$VERSION}")
+    args+=("--notes" "$DESCRIPTION")
+    
+    [[ "${PRERELEASE:-false}" == "true" ]] && args+=("--prerelease")
+    [[ "${DRAFT:-false}" == "true" ]] && args+=("--draft")
+    [[ "${LATEST:-true}" == "true" && "${PRERELEASE:-false}" != "true" ]] && args+=("--latest")
+    
+    if [[ "${DRY_RUN:-false}" == "true" ]]; then
+        log_info "DRY RUN - Se ejecutaría:"
+        echo "gh release create ${args[*]}"
+        return 0
+    fi
+    
+    log_step "Creando release $VERSION..."
+    
+    if gh release create "${args[@]}"; then
+        log_success "Release $VERSION creado exitosamente"
+        log_info "URL: https://github.com/$OWNER/$REPO/releases/tag/$VERSION"
+        
+        # Mostrar información adicional
+        echo ""
+        log_info "Detalles del release:"
+        echo "  - Repositorio: $OWNER/$REPO"
+        echo "  - Versión: $VERSION"
+        echo "  - Archivo: $(basename "$APK_PATH")"
+        echo "  - Tamaño: $(du -h "$APK_PATH" | cut -f1)"
+        [[ "${PRERELEASE:-false}" == "true" ]] && echo "  - Tipo: Pre-release"
+        [[ "${DRAFT:-false}" == "true" ]] && echo "  - Estado: Borrador"
+    else
+        log_error "Falló la creación del release"
+        exit 1
+    fi
+}
+
+# Eliminar release
+eliminar_release() {
+    local version="$1"
+    
+    log_warning "¿Estás seguro de eliminar el release $version?"
+    if [[ "${FORCE:-false}" != "true" ]]; then
+        read -p "Escribe 'eliminar' para confirmar: " confirm
+        [[ "$confirm" != "eliminar" ]] && exit 1
+    fi
+    
+    log_step "Eliminando release $version..."
+    
+    if gh release delete "$version" --repo "$OWNER/$REPO" --yes; then
+        log_success "Release $version eliminado"
+    else
+        log_error "Error al eliminar el release"
+        exit 1
+    fi
+}
+
+# Variables por defecto
+PRERELEASE="false"
+DRAFT="false"
+AUTO_INCREMENT="false"
+CHANGELOG="false"
+DRY_RUN="false"
+QUIET="false"
+FORCE="false"
+LATEST="true"
+
+# Procesar argumentos
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        -f|--file)
+            APK_PATH="$2"
+            shift 2
+            ;;
+        -v|--version)
+            VERSION="$2"
+            shift 2
+            ;;
+        -d|--description)
+            DESCRIPTION="$2"
+            shift 2
+            ;;
+        -t|--title)
+            TITLE="$2"
+            shift 2
+            ;;
+        -o|--owner)
+            OWNER="$2"
+            shift 2
+            ;;
+        -r|--repo)
+            REPO="$2"
+            shift 2
+            ;;
+        -p|--prerelease)
+            PRERELEASE="true"
+            LATEST="false"
+            shift
+            ;;
+        -D|--draft)
+            DRAFT="true"
+            shift
+            ;;
+        -a|--auto-increment)
+            AUTO_INCREMENT="true"
+            shift
+            ;;
+        -c|--changelog)
+            CHANGELOG="true"
+            shift
+            ;;
+        -l|--list)
+            verificar_dependencias
+            validar_repositorio
+            obtener_info_repo
+            validar_auth
+            listar_releases
+            exit 0
+            ;;
+        -x|--delete)
+            verificar_dependencias
+            validar_repositorio
+            obtener_info_repo
+            validar_auth
+            eliminar_release "$2"
+            exit 0
+            ;;
+        -n|--dry-run)
+            DRY_RUN="true"
+            shift
+            ;;
+        -q|--quiet)
+            QUIET="true"
+            shift
+            ;;
+        --force)
+            FORCE="true"
+            shift
+            ;;
+        -h|--help)
+            mostrar_ayuda
+            ;;
+        -*)
+            log_error "Opción desconocida: $1"
+            exit 1
+            ;;
+        *)
+            if [[ -z "${APK_PATH:-}" ]]; then
+                APK_PATH="$1"
+            fi
+            shift
+            ;;
+    esac
+done
+
+# Función principal
+main() {
+    # Verificaciones iniciales
+    verificar_dependencias
+    validar_repositorio
+    obtener_info_repo
+    validar_auth
+    
+    # Solicitar archivo si no se especificó
+    if [[ -z "${APK_PATH:-}" ]]; then
+        read -p "Ruta al archivo: " APK_PATH
+    fi
+    
+    # Validar archivo
+    if [[ ! -f "$APK_PATH" ]]; then
+        log_error "Archivo no encontrado: $APK_PATH"
+        exit 1
+    fi
+    
+    validar_archivo "$APK_PATH"
+    
+    # Auto-incrementar versión si se solicita
+    if [[ "$AUTO_INCREMENT" == "true" ]]; then
+        auto_incrementar_version
+    fi
+    
+    # Solicitar versión si no se especificó
+    if [[ -z "${VERSION:-}" ]]; then
+        read -p "Versión del release (ej. v1.0.0): " VERSION
+    fi
+    
+    # Validar formato de versión
+    if [[ ! "$VERSION" =~ ^v?[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?(\+[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?$ ]]; then
+        log_warning "Formato de versión no estándar: $VERSION"
+    fi
+    
+    # Generar changelog automático si se solicita
+    if [[ "$CHANGELOG" == "true" ]]; then
+        ultima_version=$(gh release list --repo "$OWNER/$REPO" --limit 1 --json tagName --jq '.[0].tagName' 2>/dev/null || echo "")
+        generar_changelog "$ultima_version"
+    fi
+    
+    # Solicitar descripción si no se especificó y no se generó changelog
+    if [[ -z "${DESCRIPTION:-}" ]]; then
+        read -p "Descripción del release: " DESCRIPTION
+    fi
+    
+    # Crear o actualizar tag
+    if ! git rev-parse "$VERSION" >/dev/null 2>&1; then
+        log_step "Creando tag $VERSION..."
+        git tag "$VERSION"
+        git push origin "$VERSION"
+    else
+        log_info "Tag $VERSION ya existe"
+    fi
+    
+    # Crear release
+    crear_release
+}
+
+# Ejecutar función principal
+main "$@"
