@@ -140,8 +140,42 @@ abrir_repo() {
 # Clonar repositorio
 clonar_repo() {
     repo_name="$1"
+    echo -e "${COLOR_BLUE}Verificando existencia de: $GITHUB_USER/$repo_name${COLOR_RESET}"
+
+    if gh repo view "$GITHUB_USER/$repo_name" >/dev/null 2>&1; then
+        echo -e "${COLOR_GREEN}✓ Repositorio existente. Procediendo a clonar...${COLOR_RESET}"
+    else
+        echo -e "${COLOR_YELLOW}Repositorio no encontrado.${COLOR_RESET}"
+        
+        # Preguntar al usuario si quiere crearlo como público o privado
+        echo -ne "${COLOR_CYAN}¿Quieres crear el repositorio como público o privado? [público/privado]: ${COLOR_RESET}"
+        read tipo_repo
+
+        # Normalizar entrada
+        tipo_repo=$(echo "$tipo_repo" | tr '[:upper:]' '[:lower:]')
+
+        case "$tipo_repo" in
+            publico|público|public)
+                vis_flag="--public"
+                ;;
+            privado|private)
+                vis_flag="--private"
+                ;;
+            *)
+                echo -e "${COLOR_RED}✗ Opción inválida. Cancelando.${COLOR_RESET}"
+                exit 1
+                ;;
+        esac
+
+        echo -e "${COLOR_BLUE}Creando repositorio '$repo_name' como ${tipo_repo}...${COLOR_RESET}"
+        if ! gh repo create "$GITHUB_USER/$repo_name" $vis_flag; then
+            echo -e "${COLOR_RED}✗ Error al crear el repositorio${COLOR_RESET}"
+            exit 1
+        fi
+        echo -e "${COLOR_GREEN}✓ Repositorio creado exitosamente${COLOR_RESET}"
+    fi
+
     echo -e "${COLOR_BLUE}Clonando repositorio: $repo_name${COLOR_RESET}"
-    
     if gh repo clone "$GITHUB_USER/$repo_name"; then
         echo -e "${COLOR_GREEN}✓ Repositorio clonado exitosamente${COLOR_RESET}"
     else
