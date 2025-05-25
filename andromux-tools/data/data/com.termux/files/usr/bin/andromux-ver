@@ -16,7 +16,7 @@ YELLOW="\033[1;33m"
 RESET="\033[0m"
 
 # Dependencias requeridas
-DEPENDENCIAS=(unzip tar unrar 7z dpkg file md5sum du)
+DEPENDENCIAS=(unzip tar unrar 7zip dpkg file md5sum du)
 
 # Funciones utilitarias
 titulo() { echo -e "\n${BLUE}${BOLD}==> $1${RESET}"; }
