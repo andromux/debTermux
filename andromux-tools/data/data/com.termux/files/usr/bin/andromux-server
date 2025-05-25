@@ -1,0 +1,159 @@
+#!/bin/bash
+
+# Binario simple para levantar web existente con Serveo
+# Uso: serveo [puerto] [subdominio]
+
+# Colores
+G='\033[0;32m'  # Green
+Y='\033[1;33m'  # Yellow
+R='\033[0;31m'  # Red
+B='\033[0;34m'  # Blue
+NC='\033[0m'    # No Color
+
+# Configuración por defecto
+PORT=${1:-8000}
+SUBDOMAIN=${2}
+WEB_DIR=$(pwd)
+
+# Funciones auxiliares
+msg() { echo -e "${G}[SERVEO]${NC} $1"; }
+warn() { echo -e "${Y}[WARN]${NC} $1"; }
+error() { echo -e "${R}[ERROR]${NC} $1"; exit 1; }
+
+# Verificar dependencias rápido
+check_deps() {
+    command -v php >/dev/null || error "PHP no instalado. Ejecuta: pkg install php"
+    command -v ssh >/dev/null || error "SSH no instalado. Ejecuta: pkg install openssh"
+}
+
+# Configurar SSH mínimo
+setup_ssh() {
+    mkdir -p ~/.ssh
+    [ ! -f ~/.ssh/id_rsa ] && ssh-keygen -t rsa -b 2048 -f ~/.ssh/id_rsa -N "" -q
+    cat > ~/.ssh/config << EOF
+Host serveo.net
+    StrictHostKeyChecking no
+    UserKnownHostsFile /dev/null
+EOF
+    chmod 600 ~/.ssh/config
+}
+
+# Verificar si hay web en directorio actual
+check_web() {
+    local files=(index.html index.php index.htm default.html)
+    local found=false
+    
+    for file in "${files[@]}"; do
+        if [ -f "$file" ]; then
+            msg "Detectado archivo web: $file"
+            found=true
+            break
+        fi
+    done
+    
+    if [ "$found" = false ]; then
+        warn "No se detectó archivo web principal (index.html, index.php, etc.)"
+        read -p "¿Continuar de todas formas? (y/N): " -n 1 -r
+        echo
+        [[ ! $REPLY =~ ^[Yy]$ ]] && exit 0
+    fi
+}
+
+# Iniciar servidor PHP
+start_server() {
+    msg "Iniciando servidor en directorio: $WEB_DIR"
+    msg "Puerto: $PORT"
+    
+    # Verificar puerto libre
+    if netstat -tuln 2>/dev/null | grep -q ":$PORT "; then
+        error "Puerto $PORT ya está en uso"
+    fi
+    
+    # Iniciar PHP server en background
+    php -S localhost:$PORT > /tmp/serveo.log 2>&1 &
+    local pid=$!
+    echo $pid > /tmp/serveo.pid
+    
+    # Verificar que inició correctamente
+    sleep 1
+    if ! kill -0 $pid 2>/dev/null; then
+        error "Error al iniciar servidor PHP"
+    fi
+    
+    msg "Servidor PHP iniciado (PID: $pid)"
+}
+
+# Exponer con Serveo
+expose_serveo() {
+    msg "Conectando con Serveo.net..."
+    
+    # Construir comando SSH
+    local cmd="ssh -o ConnectTimeout=10 -R 80:localhost:$PORT"
+    
+    if [ -n "$SUBDOMAIN" ]; then
+        cmd="$cmd -R $SUBDOMAIN:80:localhost:$PORT"
+        msg "Subdominio solicitado: $SUBDOMAIN"
+    fi
+    
+    cmd="$cmd serveo.net"
+    
+    echo -e "${B}========================================${NC}"
+    echo -e "${B}    TU WEB ESTARÁ DISPONIBLE EN:${NC}"
+    echo -e "${B}========================================${NC}"
+    warn "Presiona Ctrl+C para detener"
+    echo
+    
+    # Ejecutar túnel
+    eval $cmd
+}
+
+# Limpieza al salir
+cleanup() {
+    msg "Deteniendo servidor..."
+    [ -f /tmp/serveo.pid ] && kill $(cat /tmp/serveo.pid) 2>/dev/null
+    rm -f /tmp/serveo.pid /tmp/serveo.log
+    pkill -f "php -S localhost:$PORT" 2>/dev/null
+    exit 0
+}
+
+# Mostrar ayuda
+show_help() {
+    echo "ANDROMUX - Levanta tu web local y la expone al internet"
+    echo
+    echo "Uso: andromux-server [puerto] [subdominio]"
+    echo
+    echo "Ejemplos:"
+    echo "  andromux-server                    # Puerto 8000, sin subdominio"
+    echo "  andromux-server 3000               # Puerto 3000"
+    echo "  andromux-server 8080 miweb         # Puerto 8080 con subdominio 'miweb'"
+    echo
+    echo "El servidor se levanta en el directorio actual"
+    exit 0
+}
+
+# Función principal
+main() {
+    # Ayuda
+    [[ "$1" == "-h" || "$1" == "--help" ]] && show_help
+    
+    # Header
+    echo -e "${B}╔══════════════════════════════════════╗${NC}"
+    echo -e "${B}║            andromux-server LAUNCHER           ║${NC}"
+    echo -e "${B}║      Web local → Internet público    ║${NC}"
+    echo -e "${B}╚══════════════════════════════════════╝${NC}"
+    
+    # Verificaciones
+    check_deps
+    setup_ssh
+    check_web
+    
+    # Trap para limpieza
+    trap cleanup EXIT INT TERM
+    
+    # Proceso principal
+    start_server
+    expose_serveo
+}
+
+# Ejecutar
+main "$@"
