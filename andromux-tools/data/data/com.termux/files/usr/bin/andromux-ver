@@ -1,0 +1,156 @@
+#!/bin/bash
+
+# Nombre: andromux-ver
+# Función: Mostrar contenido, información y extraer archivos comprimidos en Termux o Linux
+# Autor: ChatGPT para el usuario andromux
+# Licencia: MIT
+
+set -euo pipefail
+
+# Colores
+BOLD="\033[1m"
+BLUE="\033[1;34m"
+GREEN="\033[1;32m"
+RED="\033[1;31m"
+YELLOW="\033[1;33m"
+RESET="\033[0m"
+
+# Dependencias requeridas
+DEPENDENCIAS=(unzip tar unrar 7z dpkg file md5sum du)
+
+# Funciones utilitarias
+titulo() { echo -e "\n${BLUE}${BOLD}==> $1${RESET}"; }
+log_info() { echo -e "${GREEN}[INFO]${RESET} $*"; }
+log_warn() { echo -e "${YELLOW}[ADVERTENCIA]${RESET} $*"; }
+log_error() { echo -e "${RED}[ERROR]${RESET} $*" >&2; exit 1; }
+
+# Verificar e instalar dependencias
+verificar_dependencias() {
+    local faltantes=()
+    for cmd in "${DEPENDENCIAS[@]}"; do
+        command -v "$cmd" >/dev/null 2>&1 || faltantes+=("$cmd")
+    done
+
+    if [[ ${#faltantes[@]} -gt 0 ]]; then
+        log_warn "Instalando dependencias faltantes: ${faltantes[*]}"
+        pkg update -y && pkg install -y "${faltantes[@]}"
+    fi
+}
+
+# Mostrar info del archivo
+mostrar_info() {
+    titulo "Información del archivo"
+    echo "Nombre: $archivo"
+    echo "Tamaño: $(du -h "$archivo" | cut -f1)"
+    echo "MD5: $(md5sum "$archivo" | awk '{print $1}')"
+    echo "Tipo MIME: $(file -b --mime-type "$archivo")"
+    echo "Tipo Real: $(file -b "$archivo")"
+}
+
+# Listar contenido del archivo
+listar_contenido() {
+    case "$archivo" in
+        *.zip|*.apk)
+            titulo "Contenido del archivo (.zip/.apk)"
+            unzip -l "$archivo"
+            ;;
+        *.tar)
+            titulo "Contenido del archivo (.tar)"
+            tar -tvf "$archivo"
+            ;;
+        *.tar.gz|*.tgz)
+            titulo "Contenido del archivo (.tar.gz/.tgz)"
+            tar -ztvf "$archivo"
+            ;;
+        *.rar)
+            titulo "Contenido del archivo (.rar)"
+            unrar l "$archivo"
+            ;;
+        *.7z)
+            titulo "Contenido del archivo (.7z)"
+            7z l "$archivo"
+            ;;
+        *.deb)
+            titulo "Contenido del archivo (.deb)"
+            dpkg-deb -c "$archivo"
+            ;;
+        *)
+            log_error "Extensión no soportada para listar contenido: $archivo"
+            ;;
+    esac
+}
+
+# Extraer archivo
+extraer_archivo() {
+    local dir_extract="${archivo%.*}_EXTRAIDO"
+    mkdir -p "$dir_extract"
+
+    titulo "Extrayendo en: $dir_extract"
+
+    case "$archivo" in
+        *.zip|*.apk)
+            unzip -o "$archivo" -d "$dir_extract"
+            ;;
+        *.tar)
+            tar -xvf "$archivo" -C "$dir_extract"
+            ;;
+        *.tar.gz|*.tgz)
+            tar -xzvf "$archivo" -C "$dir_extract"
+            ;;
+        *.rar)
+            unrar x -o+ "$archivo" "$dir_extract/"
+            ;;
+        *.7z)
+            7z x "$archivo" -o"$dir_extract"
+            ;;
+        *.deb)
+            dpkg-deb -x "$archivo" "$dir_extract"
+            ;;
+        *)
+            log_error "Extensión no soportada para extraer: $archivo"
+            ;;
+    esac
+
+    log_info "Extracción completada en: $dir_extract"
+}
+
+# Mostrar ayuda
+mostrar_ayuda() {
+    echo -e "${BOLD}Uso:${RESET} $0 archivo.ext [--info] [--extract]"
+    echo -e "${BOLD}Opciones:${RESET}"
+    echo "  --info      Mostrar detalles del archivo (tamaño, md5, mime...)"
+    echo "  --extract   Extraer el contenido del archivo a una carpeta"
+    echo "  --help      Mostrar esta ayuda"
+    exit 0
+}
+
+# Comprobación de parámetros
+[[ $# -lt 1 ]] && mostrar_ayuda
+
+# Inicializar variables
+archivo=""
+mostrar_detalles=false
+extraer_contenido=false
+
+# Procesar argumentos
+for arg in "$@"; do
+    case "$arg" in
+        --info) mostrar_detalles=true ;;
+        --extract) extraer_contenido=true ;;
+        --help) mostrar_ayuda ;;
+        -*)
+            log_error "Opción no reconocida: $arg"
+            ;;
+        *)
+            archivo="$arg"
+            ;;
+    esac
+done
+
+[[ ! -f "$archivo" ]] && log_error "Archivo no encontrado: $archivo"
+
+# Ejecutar funciones
+verificar_dependencias
+$mostrar_detalles && mostrar_info
+listar_contenido
+$extraer_contenido && extraer_archivo
