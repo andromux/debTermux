@@ -1,0 +1,497 @@
+#!/data/data/com.termux/files/usr/bin/bash
+
+# =============================================================================
+#  🚀 ANDROMUX GIT PUSH MANAGER - SUBIDA PROFESIONAL DE CAMBIOS
+# =============================================================================
+
+# Configuración de colores profesionales
+readonly RED='\033[0;31m'
+readonly GREEN='\033[0;32m'
+readonly YELLOW='\033[1;33m'
+readonly BLUE='\033[0;34m'
+readonly PURPLE='\033[0;35m'
+readonly CYAN='\033[0;36m'
+readonly WHITE='\033[1;37m'
+readonly GRAY='\033[0;90m'
+readonly BOLD='\033[1m'
+readonly UNDERLINE='\033[4m'
+readonly RESET='\033[0m'
+
+# Caracteres especiales para mejor presentación
+readonly CHECK_MARK="✓"
+readonly CROSS_MARK="✗"
+readonly ARROW_RIGHT="→"
+readonly GEAR="⚙"
+readonly FOLDER="📁"
+readonly GIT_ICON="🔄"
+readonly SUCCESS_ICON="🎉"
+readonly WARNING_ICON="⚠"
+readonly CONFIG_ICON="🔧"
+readonly SSH_ICON="🔑"
+readonly UPLOAD_ICON="⬆"
+readonly COMMIT_ICON="💾"
+
+# Configuración
+readonly CONFIG_FILE="$HOME/.config.andromux.json"
+readonly VERSION="2.0.0"
+readonly SCRIPT_NAME="Andromux Git Push Manager"
+
+# Variables globales
+REPO_DIR=""
+TARGET_DIR=""
+COMMIT_MESSAGE=""
+PUSH_ALL=false
+TOTAL_REPOS=0
+PUSHED_REPOS=0
+ERROR_REPOS=0
+NO_CHANGES_REPOS=0
+FORCE_PUSH=false
+AUTO_COMMIT=false
+
+# Función para leer configuración
+read_config() {
+    if [ ! -f "$CONFIG_FILE" ]; then
+        echo -e "${RED}${CROSS_MARK} Error:${RESET} ${RED}No se encontró archivo de configuración${RESET}"
+        echo -e "${YELLOW}${ARROW_RIGHT} Ejecuta primero el Git Manager para crear la configuración${RESET}"
+        echo -e "${GRAY}   Archivo esperado: $CONFIG_FILE${RESET}"
+        exit 1
+    fi
+    
+    # Leer directorio de repositorios desde JSON
+    REPO_DIR=$(grep -o '"repo_directory"[[:space:]]*:[[:space:]]*"[^"]*"' "$CONFIG_FILE" | sed 's/.*"repo_directory"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/')
+    
+    if [ -z "$REPO_DIR" ]; then
+        echo -e "${RED}${CROSS_MARK} Error:${RESET} ${RED}No se pudo leer la configuración${RESET}"
+        exit 1
+    fi
+}
+
+# Función para mostrar encabezado estilizado
+show_header() {
+    clear
+    echo -e "${CYAN}╔══════════════════════════════════════════════════════════════════════════════╗${RESET}"
+    echo -e "${CYAN}║${WHITE}${BOLD}                   🚀 ANDROMUX GIT PUSH MANAGER v$VERSION                   ${RESET}${CYAN}║${RESET}"
+    echo -e "${CYAN}╠══════════════════════════════════════════════════════════════════════════════╣${RESET}"
+    echo -e "${CYAN}║${RESET} ${GRAY}Directorio base:${RESET} ${YELLOW}$REPO_DIR${RESET}"
+    if [ -n "$TARGET_DIR" ]; then
+        echo -e "${CYAN}║${RESET} ${GRAY}Directorio objetivo:${RESET} ${YELLOW}$TARGET_DIR${RESET}"
+    fi
+    echo -e "${CYAN}║${RESET} ${GRAY}Fecha:${RESET}           ${WHITE}$(date '+%Y-%m-%d %H:%M:%S')${RESET}"
+    echo -e "${CYAN}╚══════════════════════════════════════════════════════════════════════════════╝${RESET}"
+    echo
+}
+
+# Función para mostrar separador
+show_separator() {
+    echo -e "${GRAY}────────────────────────────────────────────────────────────────────────────────${RESET}"
+}
+
+# Función para listar repositorios disponibles
+list_available_repos() {
+    echo -e "${WHITE}${BOLD}📂 REPOSITORIOS DISPONIBLES:${RESET}"
+    show_separator
+    
+    local count=1
+    for dir in "$REPO_DIR"/*; do
+        if [ -d "$dir" ] && [ -d "$dir/.git" ]; then
+            local repo_name=$(basename "$dir")
+            local branch=$(git -C "$dir" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "unknown")
+            local status_info=""
+            
+            # Verificar si hay cambios
+            if ! git -C "$dir" diff-index --quiet HEAD -- 2>/dev/null; then
+                status_info="${YELLOW}(cambios pendientes)${RESET}"
+            else
+                status_info="${GREEN}(limpio)${RESET}"
+            fi
+            
+            echo -e "${WHITE}$count.${RESET} ${CYAN}$repo_name${RESET} ${GRAY}[$branch]${RESET} $status_info"
+            ((count++))
+        fi
+    done
+    
+    if [ $count -eq 1 ]; then
+        echo -e "${YELLOW}${WARNING_ICON} No se encontraron repositorios Git en el directorio${RESET}"
+        return 1
+    fi
+    
+    echo
+    return 0
+}
+
+# Función para verificar cambios en un repositorio
+check_repo_status() {
+    local dir="$1"
+    local repo_name=$(basename "$dir")
+    
+    echo -e "${BLUE}${FOLDER} Analizando:${RESET} ${BOLD}$repo_name${RESET}"
+    
+    # Verificar si es un repositorio válido
+    if [ ! -d "$dir/.git" ]; then
+        echo -e "   ${RED}${CROSS_MARK} Error:${RESET} ${RED}No es un repositorio Git válido${RESET}"
+        return 1
+    fi
+    
+    # Obtener información del repositorio
+    local branch=$(git -C "$dir" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "unknown")
+    local remote_url=$(git -C "$dir" config --get remote.origin.url 2>/dev/null || echo "Sin remote")
+    
+    echo -e "   ${GRAY}${ARROW_RIGHT} Rama actual:${RESET} ${YELLOW}$branch${RESET}"
+    echo -e "   ${GRAY}${ARROW_RIGHT} Remote:${RESET} ${BLUE}$remote_url${RESET}"
+    
+    # Verificar estado del repositorio
+    local has_staged=$(git -C "$dir" diff --cached --quiet; echo $?)
+    local has_unstaged=$(git -C "$dir" diff --quiet; echo $?)
+    local has_untracked=$(git -C "$dir" ls-files --others --exclude-standard | wc -l)
+    
+    if [ $has_unstaged -ne 0 ] || [ $has_untracked -gt 0 ]; then
+        echo -e "   ${YELLOW}${WARNING_ICON} Cambios detectados:${RESET}"
+        if [ $has_unstaged -ne 0 ]; then
+            echo -e "     ${GRAY}${ARROW_RIGHT} Archivos modificados sin preparar${RESET}"
+        fi
+        if [ $has_untracked -gt 0 ]; then
+            echo -e "     ${GRAY}${ARROW_RIGHT} $has_untracked archivo(s) sin seguimiento${RESET}"
+        fi
+        return 2  # Hay cambios para agregar
+    elif [ $has_staged -ne 0 ]; then
+        echo -e "   ${GREEN}${CHECK_MARK} Cambios preparados para commit${RESET}"
+        return 3  # Hay cambios preparados
+    else
+        echo -e "   ${GREEN}${CHECK_MARK} Repositorio limpio${RESET}"
+        return 0  # No hay cambios
+    fi
+}
+
+# Función para obtener mensaje de commit
+get_commit_message() {
+    if [ -n "$COMMIT_MESSAGE" ]; then
+        return 0
+    fi
+    
+    echo -e "${WHITE}${COMMIT_ICON} ${BOLD}MENSAJE DE COMMIT${RESET}"
+    show_separator
+    echo -e "${GRAY}Ingresa un mensaje descriptivo para tus cambios:${RESET}"
+    echo -e "${YELLOW}${ARROW_RIGHT} Ejemplo: 'feat: añadir nueva funcionalidad de login'${RESET}"
+    echo -e "${YELLOW}${ARROW_RIGHT} Ejemplo: 'fix: corregir bug en validación de datos'${RESET}"
+    echo -e "${YELLOW}${ARROW_RIGHT} Ejemplo: 'docs: actualizar documentación del API'${RESET}"
+    echo
+    
+    while true; do
+        echo -ne "${WHITE}💬 Commit: ${RESET}"
+        read -r COMMIT_MESSAGE
+        
+        if [ -n "$COMMIT_MESSAGE" ]; then
+            # Validar longitud mínima
+            if [ ${#COMMIT_MESSAGE} -lt 5 ]; then
+                echo -e "${RED}${CROSS_MARK} El mensaje debe tener al menos 5 caracteres${RESET}"
+                continue
+            fi
+            break
+        else
+            echo -e "${RED}${CROSS_MARK} El mensaje no puede estar vacío${RESET}"
+        fi
+    done
+    
+    echo -e "${GREEN}${CHECK_MARK} Mensaje configurado:${RESET} ${CYAN}\"$COMMIT_MESSAGE\"${RESET}"
+    echo
+}
+
+# Función para procesar un repositorio
+process_repo() {
+    local dir="$1"
+    local repo_name=$(basename "$dir")
+    
+    echo -e "\n${PURPLE}${UPLOAD_ICON} Procesando:${RESET} ${BOLD}$repo_name${RESET}"
+    echo -e "${GRAY}   Ubicación: $dir${RESET}"
+    
+    # Verificar estado del repositorio
+    local status_result
+    check_repo_status "$dir"
+    status_result=$?
+    
+    case $status_result in
+        0)  # Repositorio limpio
+            echo -e "   ${YELLOW}${WARNING_ICON} Sin cambios para subir${RESET}"
+            ((NO_CHANGES_REPOS++))
+            return 0
+            ;;
+        1)  # Error en el repositorio
+            ((ERROR_REPOS++))
+            return 1
+            ;;
+        2|3)  # Hay cambios
+            ;;
+    esac
+    
+    # Confirmar operación si no es automático
+    if [ "$AUTO_COMMIT" = false ]; then
+        echo -e "   ${YELLOW}${ARROW_RIGHT} ¿Proceder con commit y push? (s/N):${RESET}"
+        read -r confirm
+        if [[ ! "$confirm" =~ ^[sS]$ ]]; then
+            echo -e "   ${GRAY}${ARROW_RIGHT} Omitido por el usuario${RESET}"
+            return 0
+        fi
+    fi
+    
+    # Agregar cambios al área de preparación
+    echo -e "   ${CYAN}${GEAR} Preparando cambios...${RESET}"
+    if ! git -C "$dir" add . 2>/dev/null; then
+        echo -e "   ${RED}${CROSS_MARK} Error al agregar cambios${RESET}"
+        ((ERROR_REPOS++))
+        return 1
+    fi
+    
+    # Hacer commit
+    echo -e "   ${CYAN}${COMMIT_ICON} Haciendo commit...${RESET}"
+    if ! git -C "$dir" commit -m "$COMMIT_MESSAGE" 2>/dev/null; then
+        echo -e "   ${RED}${CROSS_MARK} Error al hacer commit${RESET}"
+        ((ERROR_REPOS++))
+        return 1
+    fi
+    
+    # Obtener rama actual para push
+    local current_branch=$(git -C "$dir" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "main")
+    
+    # Hacer push
+    echo -e "   ${CYAN}${UPLOAD_ICON} Subiendo a remote ($current_branch)...${RESET}"
+    local push_output
+    local push_cmd="git -C \"$dir\" push origin $current_branch"
+    
+    if [ "$FORCE_PUSH" = true ]; then
+        push_cmd+=" --force-with-lease"
+        echo -e "   ${YELLOW}${WARNING_ICON} Usando push forzado (--force-with-lease)${RESET}"
+    fi
+    
+    if push_output=$(eval "$push_cmd" 2>&1); then
+        echo -e "   ${GREEN}${SUCCESS_ICON} Subido exitosamente${RESET}"
+        
+        # Mostrar información adicional si está disponible
+        if echo "$push_output" | grep -q "To "; then
+            local remote_info=$(echo "$push_output" | grep "To " | head -1)
+            echo -e "   ${GRAY}${ARROW_RIGHT} $remote_info${RESET}"
+        fi
+        
+        ((PUSHED_REPOS++))
+        return 0
+    else
+        echo -e "   ${RED}${CROSS_MARK} Error durante el push${RESET}"
+        echo -e "   ${GRAY}${ARROW_RIGHT} Detalle: ${RED}$(echo "$push_output" | head -1)${RESET}"
+        
+        # Sugerir soluciones comunes
+        if echo "$push_output" | grep -q "rejected"; then
+            echo -e "   ${YELLOW}${ARROW_RIGHT} Sugerencia: Usa --force para forzar el push${RESET}"
+        elif echo "$push_output" | grep -q "authentication"; then
+            echo -e "   ${YELLOW}${ARROW_RIGHT} Sugerencia: Verifica tu configuración SSH${RESET}"
+        fi
+        
+        ((ERROR_REPOS++))
+        return 1
+    fi
+}
+
+# Función para mostrar resumen final
+show_summary() {
+    echo
+    show_separator
+    echo -e "\n${WHITE}${BOLD}📊 RESUMEN DE OPERACIONES${RESET}"
+    show_separator
+    
+    echo -e "${GRAY}Total de repositorios procesados:${RESET} ${WHITE}${BOLD}$TOTAL_REPOS${RESET}"
+    echo -e "${GREEN}${SUCCESS_ICON} Subidos exitosamente:${RESET}        ${GREEN}${BOLD}$PUSHED_REPOS${RESET}"
+    echo -e "${YELLOW}${CHECK_MARK} Sin cambios para subir:${RESET}       ${YELLOW}${BOLD}$NO_CHANGES_REPOS${RESET}"
+    echo -e "${RED}${CROSS_MARK} Errores encontrados:${RESET}         ${RED}${BOLD}$ERROR_REPOS${RESET}"
+    
+    show_separator
+    
+    # Mostrar estado general
+    if [ $ERROR_REPOS -eq 0 ] && [ $PUSHED_REPOS -gt 0 ]; then
+        echo -e "\n${GREEN}${SUCCESS_ICON} ${BOLD}¡CAMBIOS SUBIDOS EXITOSAMENTE!${RESET}"
+        echo -e "${GREEN}Todos los repositorios han sido actualizados en el remote.${RESET}"
+    elif [ $ERROR_REPOS -eq 0 ] && [ $PUSHED_REPOS -eq 0 ]; then
+        echo -e "\n${YELLOW}${CHECK_MARK} ${BOLD}OPERACIÓN COMPLETADA${RESET}"
+        echo -e "${YELLOW}No había cambios pendientes para subir.${RESET}"
+    elif [ $ERROR_REPOS -gt 0 ] && [ $PUSHED_REPOS -gt 0 ]; then
+        echo -e "\n${YELLOW}${WARNING_ICON} ${BOLD}OPERACIÓN COMPLETADA CON ADVERTENCIAS${RESET}"
+        echo -e "${YELLOW}Algunos repositorios se subieron, otros presentaron errores.${RESET}"
+    else
+        echo -e "\n${RED}${CROSS_MARK} ${BOLD}OPERACIÓN COMPLETADA CON ERRORES${RESET}"
+        echo -e "${RED}No se pudieron subir los cambios.${RESET}"
+    fi
+    
+    if [ -n "$COMMIT_MESSAGE" ]; then
+        echo -e "\n${GRAY}Mensaje de commit usado: ${WHITE}\"$COMMIT_MESSAGE\"${RESET}"
+    fi
+    echo -e "${GRAY}Finalizado el $(date '+%Y-%m-%d a las %H:%M:%S')${RESET}"
+    echo
+}
+
+# Función para mostrar ayuda
+show_help() {
+    echo -e "${WHITE}${BOLD}$SCRIPT_NAME v$VERSION${RESET}"
+    echo -e "${GRAY}Herramienta profesional para subir cambios a repositorios Git${RESET}"
+    echo
+    echo -e "${WHITE}Uso:${RESET}"
+    echo -e "  $0 [opciones]"
+    echo
+    echo -e "${WHITE}Opciones:${RESET}"
+    echo -e "  -d, --directory DIR    Procesar solo el directorio especificado"
+    echo -e "  -a, --all             Procesar todos los repositorios automáticamente"
+    echo -e "  -m, --message MSG     Usar mensaje de commit especificado"
+    echo -e "  -f, --force           Usar push forzado (--force-with-lease)"
+    echo -e "  -l, --list            Listar repositorios disponibles"
+    echo -e "  -h, --help            Mostrar esta ayuda"
+    echo -e "  -v, --version         Mostrar versión"
+    echo
+    echo -e "${WHITE}Ejemplos:${RESET}"
+    echo -e "  $0 -d mi-proyecto -m \"fix: corregir bug crítico\""
+    echo -e "  $0 --all --message \"docs: actualizar documentación\""
+    echo -e "  $0 --list"
+    echo
+    echo -e "${WHITE}Configuración:${RESET}"
+    echo -e "  Archivo: $CONFIG_FILE"
+    echo
+}
+
+# FUNCIÓN PRINCIPAL
+main() {
+    # Procesar argumentos
+    while [[ $# -gt 0 ]]; do
+        case $1 in
+            -d|--directory)
+                TARGET_DIR="$2"
+                shift 2
+                ;;
+            -a|--all)
+                PUSH_ALL=true
+                AUTO_COMMIT=true
+                shift
+                ;;
+            -m|--message)
+                COMMIT_MESSAGE="$2"
+                shift 2
+                ;;
+            -f|--force)
+                FORCE_PUSH=true
+                shift
+                ;;
+            -l|--list)
+                read_config
+                list_available_repos
+                exit 0
+                ;;
+            -h|--help)
+                show_help
+                exit 0
+                ;;
+            -v|--version)
+                echo "$SCRIPT_NAME v$VERSION"
+                exit 0
+                ;;
+            *)
+                echo -e "${RED}Opción desconocida: $1${RESET}"
+                echo -e "${YELLOW}Usa --help para ver las opciones disponibles${RESET}"
+                exit 1
+                ;;
+        esac
+    done
+    
+    # Leer configuración
+    read_config
+    
+    show_header
+    
+    # Verificar directorio base
+    if [ ! -d "$REPO_DIR" ]; then
+        echo -e "${RED}${CROSS_MARK} Error:${RESET} ${RED}El directorio base no existe: $REPO_DIR${RESET}"
+        exit 1
+    fi
+    
+    # Obtener mensaje de commit si no se proporcionó
+    if [ -z "$COMMIT_MESSAGE" ]; then
+        get_commit_message
+    fi
+    
+    # Determinar qué repositorios procesar
+    local repos_to_process=()
+    
+    if [ -n "$TARGET_DIR" ]; then
+        # Procesar directorio específico
+        local target_path="$REPO_DIR/$TARGET_DIR"
+        if [ ! -d "$target_path" ]; then
+            echo -e "${RED}${CROSS_MARK} Error:${RESET} ${RED}El directorio '$TARGET_DIR' no existe en $REPO_DIR${RESET}"
+            echo -e "\n${YELLOW}${ARROW_RIGHT} Repositorios disponibles:${RESET}"
+            list_available_repos
+            exit 1
+        fi
+        repos_to_process=("$target_path")
+        TOTAL_REPOS=1
+    elif [ "$PUSH_ALL" = true ]; then
+        # Procesar todos los repositorios
+        for dir in "$REPO_DIR"/*; do
+            if [ -d "$dir" ] && [ -d "$dir/.git" ]; then
+                repos_to_process+=("$dir")
+            fi
+        done
+        TOTAL_REPOS=${#repos_to_process[@]}
+    else
+        # Modo interactivo - mostrar lista y preguntar
+        if ! list_available_repos; then
+            exit 1
+        fi
+        
+        echo -e "${WHITE}¿Qué deseas hacer?${RESET}"
+        echo -e "  ${CYAN}1.${RESET} Procesar un repositorio específico"
+        echo -e "  ${CYAN}2.${RESET} Procesar todos los repositorios"
+        echo -ne "\n${WHITE}Selección (1-2): ${RESET}"
+        read -r selection
+        
+        case $selection in
+            1)
+                echo -ne "${WHITE}Nombre del repositorio: ${RESET}"
+                read -r repo_name
+                local target_path="$REPO_DIR/$repo_name"
+                if [ ! -d "$target_path" ]; then
+                    echo -e "${RED}${CROSS_MARK} Repositorio no encontrado${RESET}"
+                    exit 1
+                fi
+                repos_to_process=("$target_path")
+                TOTAL_REPOS=1
+                ;;
+            2)
+                for dir in "$REPO_DIR"/*; do
+                    if [ -d "$dir" ] && [ -d "$dir/.git" ]; then
+                        repos_to_process+=("$dir")
+                    fi
+                done
+                TOTAL_REPOS=${#repos_to_process[@]}
+                AUTO_COMMIT=true
+                ;;
+            *)
+                echo -e "${RED}Selección inválida${RESET}"
+                exit 1
+                ;;
+        esac
+    fi
+    
+    if [ $TOTAL_REPOS -eq 0 ]; then
+        echo -e "${YELLOW}${WARNING_ICON} No se encontraron repositorios para procesar${RESET}"
+        exit 0
+    fi
+    
+    echo -e "${WHITE}${BOLD}🚀 INICIANDO PROCESO DE SUBIDA${RESET}"
+    echo -e "${GRAY}Se procesarán ${WHITE}$TOTAL_REPOS${RESET}${GRAY} repositorio(s)${RESET}"
+    echo -e "${GRAY}Mensaje de commit: ${WHITE}\"$COMMIT_MESSAGE\"${RESET}"
+    echo
+    
+    # Procesar repositorios
+    for repo_dir in "${repos_to_process[@]}"; do
+        process_repo "$repo_dir"
+        sleep 0.5
+    done
+    
+    # Mostrar resumen
+    show_summary
+}
+
+# Ejecutar función principal
+main "$@"
