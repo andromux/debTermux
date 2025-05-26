@@ -1,7 +1,7 @@
 #!/data/data/com.termux/files/usr/bin/bash
 
 # =============================================================================
-#  🚀 ACTUALIZADOR DE REPOSITORIOS GIT - VERSIÓN PROFESIONAL
+#  🚀 ANDROMUX GIT MANAGER - ACTUALIZADOR PROFESIONAL DE REPOSITORIOS
 # =============================================================================
 
 # Configuración de colores profesionales
@@ -26,20 +26,147 @@ readonly FOLDER="📁"
 readonly GIT_ICON="🔄"
 readonly SUCCESS_ICON="🎉"
 readonly WARNING_ICON="⚠"
+readonly CONFIG_ICON="🔧"
+readonly SSH_ICON="🔑"
 
-REPO_DIR="$HOME/git-repos"
+# Configuración
+readonly CONFIG_FILE="$HOME/.config.andromux.json"
+readonly VERSION="2.0.0"
+readonly SCRIPT_NAME="Andromux Git Manager"
+
+# Variables globales
+REPO_DIR=""
 TOTAL_REPOS=0
 UPDATED_REPOS=0
 ERROR_REPOS=0
 UP_TO_DATE_REPOS=0
+FIRST_RUN=false
+
+# Función para crear configuración por defecto
+create_default_config() {
+    local default_repo_dir="$HOME/git-repos"
+    
+    # Crear directorio .config si no existe
+    mkdir -p "$(dirname "$CONFIG_FILE")"
+    
+    # Crear configuración JSON
+    cat > "$CONFIG_FILE" << EOF
+{
+  "version": "$VERSION",
+  "created": "$(date -Iseconds)",
+  "last_updated": "$(date -Iseconds)",
+  "config": {
+    "repo_directory": "$default_repo_dir",
+    "auto_create_dir": true,
+    "ssh_configured": false,
+    "show_detailed_output": true,
+    "progress_bar_enabled": true
+  },
+  "stats": {
+    "total_runs": 0,
+    "last_run": null,
+    "repositories_managed": 0
+  }
+}
+EOF
+    
+    echo "$default_repo_dir"
+}
+
+# Función para leer configuración
+read_config() {
+    if [ ! -f "$CONFIG_FILE" ]; then
+        FIRST_RUN=true
+        REPO_DIR=$(create_default_config)
+        return 0
+    fi
+    
+    # Leer directorio de repositorios desde JSON (método compatible)
+    REPO_DIR=$(grep -o '"repo_directory"[[:space:]]*:[[:space:]]*"[^"]*"' "$CONFIG_FILE" | sed 's/.*"repo_directory"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/')
+    
+    if [ -z "$REPO_DIR" ]; then
+        echo -e "${RED}${CROSS_MARK} Error:${RESET} ${RED}No se pudo leer la configuración del archivo${RESET}"
+        echo -e "${YELLOW}${ARROW_RIGHT} Archivo:${RESET} ${WHITE}$CONFIG_FILE${RESET}"
+        exit 1
+    fi
+}
+
+# Función para actualizar estadísticas en la configuración
+update_config_stats() {
+    local temp_file=$(mktemp)
+    local current_date=$(date -Iseconds)
+    
+    # Actualizar estadísticas usando sed (compatible)
+    sed "s/\"last_updated\": \"[^\"]*\"/\"last_updated\": \"$current_date\"/" "$CONFIG_FILE" > "$temp_file"
+    sed -i "s/\"last_run\": [^,]*/\"last_run\": \"$current_date\"/" "$temp_file"
+    sed -i "s/\"repositories_managed\": [^}]*/\"repositories_managed\": $TOTAL_REPOS/" "$temp_file"
+    
+    # Incrementar contador de ejecuciones
+    local runs=$(grep -o '"total_runs"[[:space:]]*:[[:space:]]*[0-9]*' "$temp_file" | grep -o '[0-9]*$')
+    local new_runs=$((runs + 1))
+    sed -i "s/\"total_runs\": [^,]*/\"total_runs\": $new_runs/" "$temp_file"
+    
+    mv "$temp_file" "$CONFIG_FILE"
+}
+
+# Función para mostrar configuración inicial
+show_first_run_setup() {
+    clear
+    echo -e "${CYAN}╔══════════════════════════════════════════════════════════════════════════════╗${RESET}"
+    echo -e "${CYAN}║${WHITE}${BOLD}                   🎉 BIENVENIDO A ANDROMUX GIT MANAGER                     ${RESET}${CYAN}║${RESET}"
+    echo -e "${CYAN}╠══════════════════════════════════════════════════════════════════════════════╣${RESET}"
+    echo -e "${CYAN}║${RESET} ${WHITE}¡Primera ejecución detectada! Configurando tu entorno...${RESET}"
+    echo -e "${CYAN}╚══════════════════════════════════════════════════════════════════════════════╝${RESET}"
+    echo
+    
+    echo -e "${YELLOW}${CONFIG_ICON} ${BOLD}CONFIGURACIÓN INICIAL${RESET}"
+    echo -e "${GRAY}────────────────────────────────────────────────────────────────────────────────${RESET}"
+    echo -e "${WHITE}📍 Directorio configurado:${RESET} ${CYAN}$REPO_DIR${RESET}"
+    echo -e "${WHITE}📝 Archivo de configuración:${RESET} ${CYAN}$CONFIG_FILE${RESET}"
+    echo -e "${WHITE}🆔 Versión:${RESET} ${CYAN}$VERSION${RESET}"
+    echo
+    
+    # Crear directorio si no existe
+    if [ ! -d "$REPO_DIR" ]; then
+        echo -e "${YELLOW}${ARROW_RIGHT} Creando directorio de repositorios...${RESET}"
+        mkdir -p "$REPO_DIR"
+        echo -e "${GREEN}${CHECK_MARK} Directorio creado exitosamente${RESET}"
+        echo
+    fi
+    
+    # Información importante sobre SSH
+    echo -e "${RED}${SSH_ICON} ${BOLD}CONFIGURACIÓN SSH REQUERIDA${RESET}"
+    echo -e "${GRAY}────────────────────────────────────────────────────────────────────────────────${RESET}"
+    echo -e "${WHITE}Para el funcionamiento óptimo con repositorios privados:${RESET}"
+    echo
+    echo -e "${YELLOW}1.${RESET} ${WHITE}Configura tu clave SSH en GitHub/GitLab/Bitbucket${RESET}"
+    echo -e "   ${GRAY}${ARROW_RIGHT} ssh-keygen -t ed25519 -C \"tu-email@ejemplo.com\"${RESET}"
+    echo -e "   ${GRAY}${ARROW_RIGHT} cat ~/.ssh/id_ed25519.pub${RESET}"
+    echo
+    echo -e "${YELLOW}2.${RESET} ${WHITE}Clona tus repositorios usando SSH (no HTTPS):${RESET}"
+    echo -e "   ${GREEN}${CHECK_MARK} Correcto:${RESET} ${CYAN}git clone git@github.com:usuario/repo.git${RESET}"
+    echo -e "   ${RED}${CROSS_MARK} Evitar:${RESET}   ${GRAY}git clone https://github.com/usuario/repo.git${RESET}"
+    echo
+    echo -e "${YELLOW}3.${RESET} ${WHITE}Verifica tu configuración SSH:${RESET}"
+    echo -e "   ${GRAY}${ARROW_RIGHT} ssh -T git@github.com${RESET}"
+    echo
+    
+    echo -e "${BLUE}${ARROW_RIGHT} ${WHITE}Presiona Enter para continuar...${RESET}"
+    read -r
+}
 
 # Función para mostrar encabezado estilizado
 show_header() {
-    clear
+    if [ "$FIRST_RUN" = true ]; then
+        show_first_run_setup
+        clear
+    fi
+    
     echo -e "${CYAN}╔══════════════════════════════════════════════════════════════════════════════╗${RESET}"
-    echo -e "${CYAN}║${WHITE}${BOLD}                    🚀 ACTUALIZADOR DE REPOSITORIOS GIT                     ${RESET}${CYAN}║${RESET}"
+    echo -e "${CYAN}║${WHITE}${BOLD}                    🚀 ANDROMUX GIT MANAGER v$VERSION                      ${RESET}${CYAN}║${RESET}"
     echo -e "${CYAN}╠══════════════════════════════════════════════════════════════════════════════╣${RESET}"
     echo -e "${CYAN}║${RESET} ${GRAY}Directorio:${RESET} ${YELLOW}$REPO_DIR${RESET}"
+    echo -e "${CYAN}║${RESET} ${GRAY}Configuración:${RESET} ${WHITE}$CONFIG_FILE${RESET}"
     echo -e "${CYAN}║${RESET} ${GRAY}Fecha:${RESET}      ${WHITE}$(date '+%Y-%m-%d %H:%M:%S')${RESET}"
     echo -e "${CYAN}╚══════════════════════════════════════════════════════════════════════════════╝${RESET}"
     echo
@@ -71,6 +198,30 @@ show_progress() {
     printf "] ${WHITE}%d%%${RESET} (${CYAN}%d${RESET}/${CYAN}%d${RESET})" $percentage $current $total
 }
 
+# Función para verificar configuración SSH
+check_ssh_config() {
+    local ssh_issues=()
+    
+    # Verificar si existe clave SSH
+    if [ ! -f "$HOME/.ssh/id_rsa" ] && [ ! -f "$HOME/.ssh/id_ed25519" ]; then
+        ssh_issues+=("No se encontró clave SSH")
+    fi
+    
+    # Verificar si ssh-agent está corriendo
+    if ! pgrep -x "ssh-agent" > /dev/null; then
+        ssh_issues+=("SSH agent no está corriendo")
+    fi
+    
+    if [ ${#ssh_issues[@]} -gt 0 ]; then
+        echo -e "\n${YELLOW}${WARNING_ICON} ${BOLD}ADVERTENCIAS DE CONFIGURACIÓN SSH:${RESET}"
+        for issue in "${ssh_issues[@]}"; do
+            echo -e "   ${YELLOW}${ARROW_RIGHT} $issue${RESET}"
+        done
+        echo -e "   ${GRAY}Algunos repositorios privados podrían requerir autenticación manual${RESET}"
+        echo
+    fi
+}
+
 # Función para procesar un repositorio
 process_repo() {
     local dir="$1"
@@ -89,9 +240,18 @@ process_repo() {
     # Obtener información del repositorio
     local branch=$(git -C "$dir" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "unknown")
     local remote_url=$(git -C "$dir" config --get remote.origin.url 2>/dev/null || echo "Sin remote")
+    local remote_type="HTTPS"
+    
+    # Detectar si usa SSH
+    if echo "$remote_url" | grep -q "^git@\|^ssh://"; then
+        remote_type="${GREEN}SSH${RESET}"
+    else
+        remote_type="${YELLOW}HTTPS${RESET}"
+    fi
     
     echo -e "   ${GRAY}${ARROW_RIGHT} Rama actual:${RESET} ${YELLOW}$branch${RESET}"
-    echo -e "   ${GRAY}${ARROW_RIGHT} Remote URL:${RESET} ${BLUE}$remote_url${RESET}"
+    echo -e "   ${GRAY}${ARROW_RIGHT} Tipo de remote:${RESET} $remote_type"
+    echo -e "   ${GRAY}${ARROW_RIGHT} URL:${RESET} ${BLUE}$remote_url${RESET}"
     
     # Verificar si hay cambios locales
     if ! git -C "$dir" diff-index --quiet HEAD -- 2>/dev/null; then
@@ -108,16 +268,16 @@ process_repo() {
             ((UP_TO_DATE_REPOS++))
         else
             echo -e "   ${GREEN}${SUCCESS_ICON} Estado:${RESET} ${GREEN}Actualizado exitosamente${RESET}"
-            # Mostrar número de commits actualizados si es posible
-            local commits_updated=$(echo "$pull_output" | grep -o '[0-9]\+ file[s]*' | head -1)
-            if [ -n "$commits_updated" ]; then
-                echo -e "   ${GRAY}${ARROW_RIGHT} Cambios:${RESET} ${WHITE}$commits_updated${RESET}"
+            # Mostrar información adicional si hay cambios
+            local files_changed=$(echo "$pull_output" | grep -o '[0-9]\+ file[s]*' | head -1)
+            if [ -n "$files_changed" ]; then
+                echo -e "   ${GRAY}${ARROW_RIGHT} Cambios:${RESET} ${WHITE}$files_changed${RESET}"
             fi
             ((UPDATED_REPOS++))
         fi
     else
         echo -e "   ${RED}${CROSS_MARK} Estado:${RESET} ${RED}Error durante la actualización${RESET}"
-        echo -e "   ${GRAY}${ARROW_RIGHT} Detalle:${RESET} ${RED}$pull_output${RESET}"
+        echo -e "   ${GRAY}${ARROW_RIGHT} Detalle:${RESET} ${RED}$(echo "$pull_output" | head -1)${RESET}"
         ((ERROR_REPOS++))
     fi
 }
@@ -148,20 +308,67 @@ show_summary() {
         echo -e "${RED}Todos los repositorios presentaron errores.${RESET}"
     fi
     
-    echo -e "\n${GRAY}Finalizado el $(date '+%Y-%m-%d a las %H:%M:%S')${RESET}"
+    echo -e "\n${GRAY}Configuración guardada en: ${WHITE}$CONFIG_FILE${RESET}"
+    echo -e "${GRAY}Finalizado el $(date '+%Y-%m-%d a las %H:%M:%S')${RESET}"
+    echo
+}
+
+# Función para mostrar ayuda
+show_help() {
+    echo -e "${WHITE}${BOLD}$SCRIPT_NAME v$VERSION${RESET}"
+    echo -e "${GRAY}Actualizador profesional de repositorios Git para Andromux${RESET}"
+    echo
+    echo -e "${WHITE}Uso:${RESET}"
+    echo -e "  $0 [opciones]"
+    echo
+    echo -e "${WHITE}Opciones:${RESET}"
+    echo -e "  -h, --help     Mostrar esta ayuda"
+    echo -e "  -v, --version  Mostrar versión"
+    echo -e "  --config       Mostrar configuración actual"
+    echo
+    echo -e "${WHITE}Archivos:${RESET}"
+    echo -e "  Configuración: $CONFIG_FILE"
+    echo -e "  Repositorios:  $([ -n "$REPO_DIR" ] && echo "$REPO_DIR" || echo "No configurado")"
     echo
 }
 
 # FUNCIÓN PRINCIPAL
 main() {
+    # Procesar argumentos
+    case "${1:-}" in
+        -h|--help)
+            show_help
+            exit 0
+            ;;
+        -v|--version)
+            echo "$SCRIPT_NAME v$VERSION"
+            exit 0
+            ;;
+        --config)
+            if [ -f "$CONFIG_FILE" ]; then
+                echo -e "${WHITE}Configuración actual:${RESET}"
+                cat "$CONFIG_FILE"
+            else
+                echo -e "${RED}No se encontró archivo de configuración${RESET}"
+            fi
+            exit 0
+            ;;
+    esac
+    
+    # Leer configuración
+    read_config
+    
     show_header
     
     # Verificar si el directorio existe
     if [ ! -d "$REPO_DIR" ]; then
         echo -e "${RED}${CROSS_MARK} Error:${RESET} ${RED}El directorio $REPO_DIR no existe${RESET}"
-        echo -e "${YELLOW}${ARROW_RIGHT} Consejo:${RESET} ${WHITE}Crea el directorio o ajusta la variable REPO_DIR${RESET}"
+        echo -e "${YELLOW}${ARROW_RIGHT} Consejo:${RESET} ${WHITE}Crea el directorio o edita $CONFIG_FILE${RESET}"
         exit 1
     fi
+    
+    # Verificar configuración SSH
+    check_ssh_config
     
     # Contar repositorios
     for dir in "$REPO_DIR"/*; do
@@ -172,6 +379,9 @@ main() {
     
     if [ $TOTAL_REPOS -eq 0 ]; then
         echo -e "${YELLOW}${WARNING_ICON} Advertencia:${RESET} ${YELLOW}No se encontraron directorios en $REPO_DIR${RESET}"
+        echo -e "${BLUE}${ARROW_RIGHT} Clona algunos repositorios usando SSH:${RESET}"
+        echo -e "   ${GRAY}cd $REPO_DIR${RESET}"
+        echo -e "   ${GRAY}git clone git@github.com:usuario/repositorio.git${RESET}"
         exit 0
     fi
     
@@ -186,12 +396,15 @@ main() {
             ((current++))
             show_progress $current $TOTAL_REPOS
             process_repo "$dir"
-            sleep 0.5  # Pequeña pausa para mejor visualización
+            sleep 0.3  # Pequeña pausa para mejor visualización
         fi
     done
     
     # Limpiar línea de progreso
     echo
+    
+    # Actualizar estadísticas
+    update_config_stats
     
     # Mostrar resumen
     show_summary
