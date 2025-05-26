@@ -1,0 +1,201 @@
+#!/data/data/com.termux/files/usr/bin/bash
+
+# =============================================================================
+#  🚀 ACTUALIZADOR DE REPOSITORIOS GIT - VERSIÓN PROFESIONAL
+# =============================================================================
+
+# Configuración de colores profesionales
+readonly RED='\033[0;31m'
+readonly GREEN='\033[0;32m'
+readonly YELLOW='\033[1;33m'
+readonly BLUE='\033[0;34m'
+readonly PURPLE='\033[0;35m'
+readonly CYAN='\033[0;36m'
+readonly WHITE='\033[1;37m'
+readonly GRAY='\033[0;90m'
+readonly BOLD='\033[1m'
+readonly UNDERLINE='\033[4m'
+readonly RESET='\033[0m'
+
+# Caracteres especiales para mejor presentación
+readonly CHECK_MARK="✓"
+readonly CROSS_MARK="✗"
+readonly ARROW_RIGHT="→"
+readonly GEAR="⚙"
+readonly FOLDER="📁"
+readonly GIT_ICON="🔄"
+readonly SUCCESS_ICON="🎉"
+readonly WARNING_ICON="⚠"
+
+REPO_DIR="$HOME/git-repos"
+TOTAL_REPOS=0
+UPDATED_REPOS=0
+ERROR_REPOS=0
+UP_TO_DATE_REPOS=0
+
+# Función para mostrar encabezado estilizado
+show_header() {
+    clear
+    echo -e "${CYAN}╔══════════════════════════════════════════════════════════════════════════════╗${RESET}"
+    echo -e "${CYAN}║${WHITE}${BOLD}                    🚀 ACTUALIZADOR DE REPOSITORIOS GIT                     ${RESET}${CYAN}║${RESET}"
+    echo -e "${CYAN}╠══════════════════════════════════════════════════════════════════════════════╣${RESET}"
+    echo -e "${CYAN}║${RESET} ${GRAY}Directorio:${RESET} ${YELLOW}$REPO_DIR${RESET}"
+    echo -e "${CYAN}║${RESET} ${GRAY}Fecha:${RESET}      ${WHITE}$(date '+%Y-%m-%d %H:%M:%S')${RESET}"
+    echo -e "${CYAN}╚══════════════════════════════════════════════════════════════════════════════╝${RESET}"
+    echo
+}
+
+# Función para mostrar separador
+show_separator() {
+    echo -e "${GRAY}────────────────────────────────────────────────────────────────────────────────${RESET}"
+}
+
+# Función para mostrar barra de progreso estilo Node.js
+show_progress() {
+    local current=$1
+    local total=$2
+    local width=40
+    local percentage=$((current * 100 / total))
+    local filled=$((current * width / total))
+    local empty=$((width - filled))
+    
+    printf "\r${BLUE}Progreso: ${RESET}["
+    # Usar puntos para la parte completada
+    for ((i=0; i<filled; i++)); do
+        printf "${GREEN}•${RESET}"
+    done
+    # Usar puntos grises para la parte vacía
+    for ((i=0; i<empty; i++)); do
+        printf "${GRAY}•${RESET}"
+    done
+    printf "] ${WHITE}%d%%${RESET} (${CYAN}%d${RESET}/${CYAN}%d${RESET})" $percentage $current $total
+}
+
+# Función para procesar un repositorio
+process_repo() {
+    local dir="$1"
+    local repo_name=$(basename "$dir")
+    
+    echo -e "\n${PURPLE}${FOLDER} Procesando:${RESET} ${BOLD}${repo_name}${RESET}"
+    echo -e "${GRAY}   Ubicación: $dir${RESET}"
+    
+    # Verificar si es un repositorio válido
+    if [ ! -d "$dir/.git" ]; then
+        echo -e "   ${RED}${CROSS_MARK} Estado:${RESET} ${RED}No es un repositorio Git válido${RESET}"
+        ((ERROR_REPOS++))
+        return 1
+    fi
+    
+    # Obtener información del repositorio
+    local branch=$(git -C "$dir" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "unknown")
+    local remote_url=$(git -C "$dir" config --get remote.origin.url 2>/dev/null || echo "Sin remote")
+    
+    echo -e "   ${GRAY}${ARROW_RIGHT} Rama actual:${RESET} ${YELLOW}$branch${RESET}"
+    echo -e "   ${GRAY}${ARROW_RIGHT} Remote URL:${RESET} ${BLUE}$remote_url${RESET}"
+    
+    # Verificar si hay cambios locales
+    if ! git -C "$dir" diff-index --quiet HEAD -- 2>/dev/null; then
+        echo -e "   ${YELLOW}${WARNING_ICON} Advertencia:${RESET} ${YELLOW}Hay cambios locales sin confirmar${RESET}"
+    fi
+    
+    # Intentar actualizar
+    echo -e "   ${CYAN}${GIT_ICON} Actualizando...${RESET}"
+    
+    local pull_output
+    if pull_output=$(git -C "$dir" pull --ff-only 2>&1); then
+        if echo "$pull_output" | grep -q "Already up to date"; then
+            echo -e "   ${GREEN}${CHECK_MARK} Estado:${RESET} ${GREEN}Ya está actualizado${RESET}"
+            ((UP_TO_DATE_REPOS++))
+        else
+            echo -e "   ${GREEN}${SUCCESS_ICON} Estado:${RESET} ${GREEN}Actualizado exitosamente${RESET}"
+            # Mostrar número de commits actualizados si es posible
+            local commits_updated=$(echo "$pull_output" | grep -o '[0-9]\+ file[s]*' | head -1)
+            if [ -n "$commits_updated" ]; then
+                echo -e "   ${GRAY}${ARROW_RIGHT} Cambios:${RESET} ${WHITE}$commits_updated${RESET}"
+            fi
+            ((UPDATED_REPOS++))
+        fi
+    else
+        echo -e "   ${RED}${CROSS_MARK} Estado:${RESET} ${RED}Error durante la actualización${RESET}"
+        echo -e "   ${GRAY}${ARROW_RIGHT} Detalle:${RESET} ${RED}$pull_output${RESET}"
+        ((ERROR_REPOS++))
+    fi
+}
+
+# Función para mostrar resumen final
+show_summary() {
+    echo
+    show_separator
+    echo -e "\n${WHITE}${BOLD}📊 RESUMEN DE OPERACIONES${RESET}"
+    show_separator
+    
+    echo -e "${GRAY}Total de repositorios procesados:${RESET} ${WHITE}${BOLD}$TOTAL_REPOS${RESET}"
+    echo -e "${GREEN}${SUCCESS_ICON} Actualizados exitosamente:${RESET}     ${GREEN}${BOLD}$UPDATED_REPOS${RESET}"
+    echo -e "${YELLOW}${CHECK_MARK} Ya estaban actualizados:${RESET}      ${YELLOW}${BOLD}$UP_TO_DATE_REPOS${RESET}"
+    echo -e "${RED}${CROSS_MARK} Errores encontrados:${RESET}          ${RED}${BOLD}$ERROR_REPOS${RESET}"
+    
+    show_separator
+    
+    # Mostrar estado general
+    if [ $ERROR_REPOS -eq 0 ]; then
+        echo -e "\n${GREEN}${SUCCESS_ICON} ${BOLD}¡OPERACIÓN COMPLETADA EXITOSAMENTE!${RESET}"
+        echo -e "${GREEN}Todos los repositorios han sido procesados sin errores.${RESET}"
+    elif [ $ERROR_REPOS -lt $TOTAL_REPOS ]; then
+        echo -e "\n${YELLOW}${WARNING_ICON} ${BOLD}OPERACIÓN COMPLETADA CON ADVERTENCIAS${RESET}"
+        echo -e "${YELLOW}Algunos repositorios presentaron errores durante la actualización.${RESET}"
+    else
+        echo -e "\n${RED}${CROSS_MARK} ${BOLD}OPERACIÓN COMPLETADA CON ERRORES${RESET}"
+        echo -e "${RED}Todos los repositorios presentaron errores.${RESET}"
+    fi
+    
+    echo -e "\n${GRAY}Finalizado el $(date '+%Y-%m-%d a las %H:%M:%S')${RESET}"
+    echo
+}
+
+# FUNCIÓN PRINCIPAL
+main() {
+    show_header
+    
+    # Verificar si el directorio existe
+    if [ ! -d "$REPO_DIR" ]; then
+        echo -e "${RED}${CROSS_MARK} Error:${RESET} ${RED}El directorio $REPO_DIR no existe${RESET}"
+        echo -e "${YELLOW}${ARROW_RIGHT} Consejo:${RESET} ${WHITE}Crea el directorio o ajusta la variable REPO_DIR${RESET}"
+        exit 1
+    fi
+    
+    # Contar repositorios
+    for dir in "$REPO_DIR"/*; do
+        if [ -d "$dir" ]; then
+            ((TOTAL_REPOS++))
+        fi
+    done
+    
+    if [ $TOTAL_REPOS -eq 0 ]; then
+        echo -e "${YELLOW}${WARNING_ICON} Advertencia:${RESET} ${YELLOW}No se encontraron directorios en $REPO_DIR${RESET}"
+        exit 0
+    fi
+    
+    echo -e "${WHITE}${BOLD}🔍 INICIANDO PROCESO DE ACTUALIZACIÓN${RESET}"
+    echo -e "${GRAY}Se encontraron ${WHITE}$TOTAL_REPOS${RESET}${GRAY} directorios para procesar${RESET}"
+    echo
+    
+    # Procesar cada repositorio
+    local current=0
+    for dir in "$REPO_DIR"/*; do
+        if [ -d "$dir" ]; then
+            ((current++))
+            show_progress $current $TOTAL_REPOS
+            process_repo "$dir"
+            sleep 0.5  # Pequeña pausa para mejor visualización
+        fi
+    done
+    
+    # Limpiar línea de progreso
+    echo
+    
+    # Mostrar resumen
+    show_summary
+}
+
+# Ejecutar función principal
+main "$@"
