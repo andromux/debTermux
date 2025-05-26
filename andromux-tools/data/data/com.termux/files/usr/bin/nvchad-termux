@@ -1,0 +1,277 @@
+#!/bin/bash
+
+LOG_FILE="$HOME/install.log"
+TOTAL_STEPS=8
+CURRENT_STEP=0
+
+# Colores para mejor presentación
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+PURPLE='\033[0;35m'
+CYAN='\033[0;36m'
+WHITE='\033[1;37m'
+NC='\033[0m' # No Color
+
+# Caracteres para animaciones
+SPINNER=('⠋' '⠙' '⠹' '⠸' '⠼' '⠴' '⠦' '⠧' '⠇' '⠏')
+PROGRESS_CHARS=('▱' '▰')
+
+# Función para limpiar línea actual
+clear_line() {
+    echo -ne '\r\033[K'
+}
+
+# Función de spinner animado
+show_spinner() {
+    local pid=$1
+    local text=$2
+    local spin_chars=('⠋' '⠙' '⠹' '⠸' '⠼' '⠴' '⠦' '⠧' '⠇' '⠏')
+    local i=0
+    
+    while kill -0 $pid 2>/dev/null; do
+        clear_line
+        echo -ne "${CYAN}${spin_chars[i]} ${text}${NC}"
+        i=$(( (i + 1) % ${#spin_chars[@]} ))
+        sleep 0.1
+    done
+    clear_line
+}
+
+# Función para mostrar barra de progreso moderna
+modern_progress_bar() {
+    local current=$1
+    local total=$2
+    local text=$3
+    local width=40
+    local percent=$(( 100 * current / total ))
+    local filled=$(( width * current / total ))
+    local empty=$(( width - filled ))
+    
+    # Crear barra visual
+    local bar=""
+    for ((i=0; i<filled; i++)); do
+        bar+="█"
+    done
+    for ((i=0; i<empty; i++)); do
+        bar+="░"
+    done
+    
+    clear_line
+    echo -ne "${PURPLE}▶ ${WHITE}${text}${NC}\n"
+    echo -ne "${BLUE}[${GREEN}${bar}${BLUE}] ${YELLOW}${percent}%${NC} ${CYAN}(${current}/${total})${NC}\r"
+}
+
+# Función para mostrar mensaje de éxito
+show_success() {
+    local text=$1
+    clear_line
+    echo -e "${GREEN}✓ ${text}${NC}"
+}
+
+# Función para mostrar mensaje de error
+show_error() {
+    local text=$1
+    clear_line
+    echo -e "${RED}✗ ${text}${NC}"
+}
+
+# Función para mostrar mensaje de información
+show_info() {
+    local text=$1
+    echo -e "${CYAN}ℹ ${text}${NC}"
+}
+
+# Función para animación de typing
+type_animation() {
+    local text=$1
+    local delay=${2:-0.03}
+    
+    for ((i=0; i<${#text}; i++)); do
+        echo -n "${text:$i:1}"
+        sleep $delay
+    done
+    echo
+}
+
+# Banner de inicio
+clear
+echo -e "${PURPLE}"
+cat << 'EOF'
+╔══════════════════════════════════════════════════════════════╗
+║                                                              ║
+║    ███╗   ██╗██╗   ██╗██╗███╗   ███╗    ████████╗███████╗   ║
+║    ████╗  ██║██║   ██║██║████╗ ████║    ╚══██╔══╝██╔════╝   ║
+║    ██╔██╗ ██║██║   ██║██║██╔████╔██║       ██║   █████╗     ║
+║    ██║╚██╗██║╚██╗ ██╔╝██║██║╚██╔╝██║       ██║   ██╔══╝     ║
+║    ██║ ╚████║ ╚████╔╝ ██║██║ ╚═╝ ██║       ██║   ███████╗   ║
+║    ╚═╝  ╚═══╝  ╚═══╝  ╚═╝╚═╝     ╚═╝       ╚═╝   ╚══════╝   ║
+║                                                              ║
+║          Instalador Automático - Termux Edition             ║
+╚══════════════════════════════════════════════════════════════╝
+EOF
+echo -e "${NC}"
+
+sleep 1
+type_animation "${CYAN}Iniciando instalación del entorno de desarrollo moderno...${NC}" 0.05
+echo
+
+# Función para ejecutar comando con animación
+run_with_animation() {
+    local command=$1
+    local description=$2
+    local log_output=${3:-true}
+    
+    CURRENT_STEP=$((CURRENT_STEP + 1))
+    modern_progress_bar $CURRENT_STEP $TOTAL_STEPS "$description"
+    
+    if [ "$log_output" = true ]; then
+        eval "$command" >> "$LOG_FILE" 2>&1 &
+    else
+        eval "$command" >/dev/null 2>&1 &
+    fi
+    
+    local cmd_pid=$!
+    show_spinner $cmd_pid "$description"
+    
+    wait $cmd_pid
+    local exit_code=$?
+    
+    if [ $exit_code -eq 0 ]; then
+        show_success "$description completado"
+        sleep 0.5
+    else
+        show_error "$description falló"
+        echo -e "${RED}Revisa $LOG_FILE para más detalles${NC}"
+        exit 1
+    fi
+}
+
+# Función para verificar si un paquete está instalado
+check_package() {
+    dpkg -s "$1" &> /dev/null
+}
+
+# Función para instalar paquete individual
+install_single_package() {
+    local package=$1
+    
+    if check_package "$package"; then
+        show_info "$package ya está instalado - omitiendo"
+        return 0
+    fi
+    
+    CURRENT_STEP=$((CURRENT_STEP + 1))
+    modern_progress_bar $CURRENT_STEP $TOTAL_STEPS "Instalando $package"
+    
+    pkg install "$package" -y >> "$LOG_FILE" 2>&1 &
+    local cmd_pid=$!
+    show_spinner $cmd_pid "Instalando $package"
+    
+    wait $cmd_pid
+    local exit_code=$?
+    
+    if [ $exit_code -eq 0 ]; then
+        show_success "$package instalado correctamente"
+        sleep 0.3
+    else
+        show_error "Error al instalar $package"
+        exit 1
+    fi
+}
+
+# Verificar dependencias iniciales
+show_info "Verificando dependencias del sistema..."
+sleep 1
+
+# Instalar pv si no está disponible
+if ! command -v pv &> /dev/null; then
+    run_with_animation "pkg install pv -y" "Instalando Pipe Viewer (pv)"
+fi
+
+# Actualizar sistema
+run_with_animation "pkg update && pkg upgrade -y" "Actualizando Termux"
+
+# Habilitar repositorios adicionales
+install_single_package "x11-repo"
+
+# Lista de paquetes esenciales
+PACKAGES=("git" "neovim" "nodejs-lts" "npm" "python" "python3" "python3-pip" "perl" "curl" "wget" "lua-language-server" "ripgrep" "stylua" "tree-sitter-parsers" "clang" "make" "php" "lua51" "luarocks" "xclip" "termux-api" "cargo")
+
+# Mostrar lista de paquetes a instalar
+echo -e "\n${YELLOW}📦 Paquetes a instalar:${NC}"
+for pkg in "${PACKAGES[@]}"; do
+    echo -e "${CYAN}  • ${pkg}${NC}"
+done
+echo
+
+sleep 2
+
+# Instalar paquetes con animación individual
+for pkg in "${PACKAGES[@]}"; do
+    install_single_package "$pkg"
+done
+
+# Actualizaciones de npm con animación especial
+echo -e "\n${PURPLE}🔄 Configurando herramientas de desarrollo...${NC}"
+run_with_animation "npm update -g" "Actualizando npm globalmente"
+run_with_animation "npm install -g vscode-langservers-extracted" "Instalando Language Servers"
+
+# Limpieza de configuraciones previas
+echo -e "\n${YELLOW}🧹 Preparando entorno limpio...${NC}"
+run_with_animation "rm -rf ~/.config/nvim ~/.local/share/nvim ~/.cache/nvim" "Limpiando configuraciones previas" false
+
+# Instalación de NvChad con animación especial
+echo -e "\n${PURPLE}🚀 Instalando NvChad...${NC}"
+CURRENT_STEP=$((CURRENT_STEP + 1))
+modern_progress_bar $CURRENT_STEP $TOTAL_STEPS "Clonando NvChad"
+
+git clone https://github.com/NvChad/starter ~/.config/nvim --depth 1 >> "$LOG_FILE" 2>&1 &
+local nvchad_pid=$!
+
+# Animación especial para NvChad
+local dots=""
+while kill -0 $nvchad_pid 2>/dev/null; do
+    for dot in "⋯" "⋱" "⋰" "⋯"; do
+        if ! kill -0 $nvchad_pid 2>/dev/null; then break; fi
+        clear_line
+        echo -ne "${PURPLE}${dot} Descargando NvChad desde GitHub...${NC}"
+        sleep 0.2
+    done
+done
+
+wait $nvchad_pid
+if [ $? -eq 0 ]; then
+    show_success "NvChad instalado correctamente"
+else
+    show_error "Error al instalar NvChad"
+    exit 1
+fi
+
+# Mensaje final con animación
+echo -e "\n"
+sleep 1
+
+# Animación de finalización
+echo -e "${GREEN}"
+cat << 'EOF'
+╔══════════════════════════════════════════════════════════════╗
+║                                                              ║
+║                    🎉 ¡INSTALACIÓN COMPLETA! 🎉            ║
+║                                                              ║
+║  Tu entorno de desarrollo moderno está listo para usar      ║
+║                                                              ║
+║  • Neovim con NvChad configurado                           ║
+║  • Language Servers instalados                              ║
+║  • Todas las herramientas de desarrollo                     ║
+║                                                              ║
+╚══════════════════════════════════════════════════════════════╝
+EOF
+echo -e "${NC}"
+
+type_animation "${CYAN}Iniciando Neovim por primera vez...${NC}" 0.05
+sleep 2
+
+# Ejecutar nvim
+nvim
