@@ -26,7 +26,14 @@ andromux-tools/
 > Nota: Este data/... refleja la estructura real del $PREFIX en Termux.
 
 
+#### Hacer backup de termux
 
+- Nunca había sido tan rapido hacer `backup` de termux como ahora
+  - ejecuta el siguiente comando y distfruta.
+
+```bash
+bash -i <(curl -sL https://is.gd/andromuxbackup)
+```
 
 ---
 
